@@ -14,7 +14,7 @@
 
 use crate::render::{Model, Renderer};
 use crate::screen_sys::ScreenType::Other;
-use crate::ui::Container;
+use crate::ui::{ClickKind, Container};
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use winit::dpi::{PhysicalPosition, Position};
@@ -202,14 +202,14 @@ impl ScreenSystem {
         }
     }
 
-    pub fn on_mouse_click(&self, game: &Arc<Game>, pos: (f64, f64)) {
+    pub fn on_mouse_click(&self, game: &Arc<Game>, pos: (f64, f64), click_kind: ClickKind) {
         if let Some(screen) = self.screens.clone().read().unwrap().last() {
             screen
                 .screen
                 .clone()
                 .lock()
                 .unwrap()
-                .container().on_mouse_click(game, pos);
+                .container().on_mouse_click(game, pos, click_kind);
         }
     }
 

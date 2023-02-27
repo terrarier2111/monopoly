@@ -17,6 +17,7 @@ use crate::player::Player;
 use crate::property::{DefinedProperty, PROPERTIES};
 use crate::render::Renderer;
 use crate::screen_sys::ScreenSystem;
+use crate::ui::ClickKind;
 
 mod player;
 mod property;
@@ -84,8 +85,12 @@ fn main() {
             WindowEvent::CursorLeft { .. } => {}
             WindowEvent::MouseWheel { .. } => {}
             WindowEvent::MouseInput { button, state, .. } => {
-                if button == &MouseButton::Left && state == &ElementState::Released {
-                    game.screen_sys.on_mouse_click(&game, mouse_pos);
+                if button == &MouseButton::Left {
+                    game.screen_sys.on_mouse_click(&game, mouse_pos, if state == &ElementState::Pressed {
+                        ClickKind::PressDown
+                    } else {
+                        ClickKind::Release
+                    });
                 }
             }
             WindowEvent::TouchpadPressure { .. } => {}

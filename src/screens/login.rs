@@ -6,17 +6,20 @@ use crate::{Game, ScreenSystem};
 use std::sync::{Arc, Mutex, RwLock};
 use rand::Rng;
 use wgpu_glyph::{HorizontalAlign, Layout, Text, VerticalAlign};
+use crate::player::Character;
 use crate::utils::DARK_GRAY_UI;
 
 #[derive(Clone)]
 pub struct Login {
     container: Arc<Container>,
+    chars: Arc<Mutex<Vec<Character>>>,
 }
 
 impl Login {
-    pub fn new(accounts: Arc<Mutex<Vec<>>>) -> Self {
+    pub fn new(chars: Arc<Mutex<Vec<Character>>>) -> Self {
         Self {
             container: Arc::new(Container::new()),
+            chars,
         }
     }
 }
@@ -26,11 +29,11 @@ impl Screen for Login {
         let entry_offset = 1.0 / ENTRIES_ON_PAGE as f32;
         for entry in game.config.fav_servers.iter().enumerate() {
             self.container.add(Arc::new(RwLock::new(Box::new(Button {
-                inner_box: TextBox {
-                    pos: (0.0, 1.0 - ((entry.0 + 1) as f32 * entry_offset)),
-                    width: 0.2,
-                    height: 0.1,
-                    coloring: Coloring::Color([
+                inner_box: TextBox::new(
+                    (0.0, 1.0 - ((entry.0 + 1) as f32 * entry_offset)),
+                    0.2,
+                    0.1,
+                    Coloring::Color([
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
@@ -38,12 +41,12 @@ impl Screen for Login {
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
                     ]),
-                    text: TextSection {
+                    TextSection {
                         layout: Layout::default_single_line().v_align(VerticalAlign::Bottom/*Bottom*//*VerticalAlign::Center*/).h_align(HorizontalAlign::Left),
                         text: vec![Text::default().with_scale(30.0)],
                         texts: vec![entry.1.name.clone()],
                     }
-                },
+                ),
                 data: None,
                 on_click: Arc::new(Box::new(|button, client| {
                     println!("test!!");
