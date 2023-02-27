@@ -1,7 +1,10 @@
 #![feature(maybe_uninit_uninit_array)]
 #![feature(maybe_uninit_array_assume_init)]
 
+use std::fs;
+use std::fs::File;
 use std::mem::MaybeUninit;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use rand::Rng;
@@ -13,10 +16,11 @@ use winit::window::WindowBuilder;
 use crate::action_cards::ActionCard;
 use crate::atlas::Atlas;
 use crate::board::{Board, Tile};
-use crate::player::Player;
+use crate::player::{Character, load_characters, Player};
 use crate::property::{DefinedProperty, PROPERTIES};
 use crate::render::Renderer;
 use crate::screen_sys::ScreenSystem;
+use crate::screens::login;
 use crate::ui::ClickKind;
 
 mod player;
@@ -31,6 +35,9 @@ mod screens;
 mod utils;
 
 fn main() {
+    if !Path::new("./config/").exists() {
+        fs::create_dir("./config/").unwrap();
+    }
     let event_loop = EventLoopBuilder::new().build();
     let window = WindowBuilder::new()
         .with_title("Schul-monopoly")
@@ -46,10 +53,10 @@ fn main() {
     ));
     let renderer = Arc::new(Renderer::new(state.clone(), &window).unwrap());
     let screen_sys = Arc::new(ScreenSystem::new());
-    // screen_sys.push_screen(Box::new(ServerList::new()));
 
     let game = Arc::new(Game::new(renderer.clone()));
 
+    screen_sys.push_screen(Box::new(login::Login::new(Arc::new(Mutex::new(game.characters.clone())))));
 
     let mut mouse_pos = (0.0, 0.0);
     event_loop.run(move |event, _, control_flow| match event {
@@ -140,6 +147,7 @@ pub struct Game {
     pub game_state: Mutex<GameState>,
     pub screen_sys: Arc<ScreenSystem>,
     pub renderer: Arc<Renderer>,
+    pub characters: Vec<Character>,
 }
 
 impl Game {
@@ -195,6 +203,7 @@ impl Game {
             game_state: Mutex::new(GameState::Login),
             screen_sys: Arc::new(ScreenSystem::new()),
             renderer,
+            characters: load_characters(),
         }
     }
 

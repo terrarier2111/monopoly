@@ -15,14 +15,14 @@ pub struct Player {
     pub wait: usize,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Character {
     pub name: String,
     pub id: usize,
     pub model_path: String,
 }
 
-const CHARACTER_PATH: &str = "./characters.json";
+const CHARACTER_PATH: &str = "./config/characters.json";
 
 pub fn load_characters() -> Vec<Character> {
     if Path::new(CHARACTER_PATH).exists() {

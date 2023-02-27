@@ -3,7 +3,7 @@ use crate::render::{ColorSource, Model, TexTriple, TexTy, Vertex};
 use crate::screen_sys::ScreenSystem;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use atomicfloat::AtomicF64;
+use atomic_float::AtomicF64;
 use fontdue::{Font, FontSettings};
 use wgpu::{Sampler, Texture, TextureView};
 use wgpu_glyph::{BuiltInLineBreaker, Extra, Layout, Section, Text};
@@ -271,6 +271,7 @@ impl Component for ColorBox {
                         uv: match &tex.ty {
                             TexTy::Atlas(atlas) => atlas.uv().into_tuple(),
                         },
+                        color_scale_factor: 1.0,
                     });
                 }
                 ret
@@ -367,8 +368,16 @@ impl Component for TextBox<'_> {
                 ret
             }
             Coloring::Tex(tex) => {
-                // FIXME: support darkening textures as well!
                 let mut ret = Vec::with_capacity(6);
+                let color_scale_factor = if self.hovered {
+                    0.8
+                } else {
+                    1.0
+                } * if self.pressed {
+                    0.8
+                } else {
+                    1.0
+                };
                 for pos in vertices {
                     ret.push(Vertex::Atlas {
                         pos,
@@ -376,6 +385,7 @@ impl Component for TextBox<'_> {
                         uv: match &tex.ty {
                             TexTy::Atlas(atlas) => atlas.uv().into_tuple(),
                         },
+                        color_scale_factor,
                     });
                 }
                 ret

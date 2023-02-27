@@ -26,11 +26,11 @@ impl Login {
 
 impl Screen for Login {
     fn on_active(&mut self, game: &Arc<Game>) {
-        let entry_offset = 1.0 / ENTRIES_ON_PAGE as f32;
-        for entry in game.config.fav_servers.iter().enumerate() {
+        let entry_offset = 1.0 / (self.chars.lock().unwrap().len() + 3) as f32;
+        for char in self.chars.lock().unwrap().iter().enumerate() {
             self.container.add(Arc::new(RwLock::new(Box::new(Button {
                 inner_box: TextBox::new(
-                    (0.0, 1.0 - ((entry.0 + 1) as f32 * entry_offset)),
+                    (entry_offset * 1.5, 1.0 - ((char.0 + 1) as f32 * entry_offset)),
                     0.2,
                     0.1,
                     Coloring::Color([
@@ -44,7 +44,7 @@ impl Screen for Login {
                     TextSection {
                         layout: Layout::default_single_line().v_align(VerticalAlign::Bottom/*Bottom*//*VerticalAlign::Center*/).h_align(HorizontalAlign::Left),
                         text: vec![Text::default().with_scale(30.0)],
-                        texts: vec![entry.1.name.clone()],
+                        texts: vec![char.1.name.clone()],
                     }
                 ),
                 data: None,

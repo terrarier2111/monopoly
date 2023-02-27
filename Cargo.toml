@@ -1,0 +1,25 @@
+[package]
+name = "schul-monopoly"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wgpu-biolerless = { git = "https://github.com/terrarier2111/wgpu-boilerless", features = ["winit"] }
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93"
+# ringbuffer = "0.12.0"
+rand = "0.8.5"
+winit = "0.28.1"
+pollster = "0.3.0"
+wgpu = "0.15.1"
+guillotiere = "0.6.2"
+fontdue = "0.7.2"
+wgpu_glyph = { git = "https://github.com/terrarier2111/wgpu_glyph" }
+swap-arc = { git = "https://github.com/terrarier2111/SwapArc" }
+bytemuck = "1.13.0"
+bytemuck_derive = "1.4.0"
+atomic_float = "0.1.0"
+anyhow = "1.0.69"
+dashmap = "5.4.0"

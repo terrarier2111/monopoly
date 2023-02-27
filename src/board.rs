@@ -11,7 +11,7 @@ pub struct Board {
     pub index: BoardIndex,
 }
 
-const BOARD_PATH: &str = "./board.json";
+const BOARD_PATH: &str = "./config/board.json";
 
 pub fn load_board() -> Board {
     if Path::new(BOARD_PATH).exists() {

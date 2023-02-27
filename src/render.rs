@@ -93,8 +93,8 @@ impl Renderer {
                                 // FIXME: make different atlases work!
                                 let vertices = model.vertices.into_iter().map(|vert| match vert {
                                     Vertex::Color { .. } => abort(),
-                                    Vertex::Atlas { pos, alpha, uv } => {
-                                        AtlasVertex { pos, alpha, uv }
+                                    Vertex::Atlas { pos, alpha, uv, color_scale_factor } => {
+                                        AtlasVertex { pos, alpha, uv, color_scale_factor }
                                     }
                                 });
                                 if let Some(mut models) = atlas_models.get_mut(&atlas.id()) {
@@ -246,6 +246,7 @@ pub enum Vertex {
         pos: [f32; 2],
         alpha: f32,
         uv: (u32, u32),
+        color_scale_factor: f32,
     },
 }
 
@@ -281,6 +282,7 @@ struct AtlasVertex {
     pos: [f32; 2],
     alpha: f32,
     uv: (u32, u32),
+    color_scale_factor: f32,
 }
 
 impl AtlasVertex {
@@ -302,6 +304,11 @@ impl AtlasVertex {
                 VertexAttribute {
                     offset: size_of::<[f32; 4]>() as BufferAddress,
                     shader_location: 2,
+                    format: VertexFormat::Float32,
+                },
+                VertexAttribute {
+                    offset: size_of::<[f32; 5]>() as BufferAddress,
+                    shader_location: 3,
                     format: VertexFormat::Float32,
                 },
             ],

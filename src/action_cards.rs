@@ -4,7 +4,7 @@ use std::path::Path;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-const ACTION_CARDS_PATH: &str = "./action_cards.json";
+const ACTION_CARDS_PATH: &str = "./config/action_cards.json";
 
 pub fn load_cards() -> Vec<ActionCard> {
     if Path::new(ACTION_CARDS_PATH).exists() {
