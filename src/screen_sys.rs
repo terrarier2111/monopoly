@@ -32,7 +32,7 @@ pub trait Screen: Send + Sync {
     fn on_deactive(&mut self, _game: &Arc<Game>);
 
     // Called every frame the screen is active
-    fn tick(&mut self, _game: &Arc<Game>, delta: f64);
+    fn tick(&mut self, _game: &Arc<Game>);
 
     // Events
     fn on_scroll(&mut self, _x: f64, _y: f64) {}
@@ -204,19 +204,33 @@ impl ScreenSystem {
 
     pub fn on_mouse_click(&self, game: &Arc<Game>, pos: (f64, f64), click_kind: ClickKind) {
         if let Some(screen) = self.screens.clone().read().unwrap().last() {
+            println!("clicked0!");
             screen
                 .screen
                 .clone()
                 .lock()
                 .unwrap()
                 .container().on_mouse_click(game, pos, click_kind);
+        } else {
+            println!("screens: {}", self.screens.clone().read().unwrap().len());
+        }
+    }
+
+    pub fn on_mouse_hover(&self, game: &Arc<Game>, pos: (f64, f64)) {
+        if let Some(screen) = self.screens.clone().read().unwrap().last() {
+            println!("hovered0!");
+            screen
+                .screen
+                .clone()
+                .lock()
+                .unwrap()
+                .container().on_mouse_hover(game, pos);
         }
     }
 
     #[allow(unused_must_use)]
     pub fn tick(
         self: &Arc<Self>,
-        delta: f64,
         game: &Arc<Game>,
         window: &Window,
     ) -> Vec<Model> {
@@ -341,7 +355,7 @@ impl ScreenSystem {
             let inner_screen = screen.1.screen.clone();
             let mut inner_screen = inner_screen.lock().unwrap();
             if inner_screen.is_tick_always() || screen.0 == len - 1 {
-                inner_screen.tick(game, delta);
+                inner_screen.tick(game);
                 let mut screen_models = inner_screen.container().build_models(game);
                 models.append(&mut screen_models);
             }

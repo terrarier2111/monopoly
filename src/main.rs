@@ -46,17 +46,11 @@ fn main() {
     let state = Arc::new(pollster::block_on(
         StateBuilder::new().window(&window).build(),
     ).unwrap());
-    let atlas = Arc::new(Atlas::new(
-        state.clone(),
-        (1024, 1024),
-        TextureFormat::Rgba8Uint,
-    ));
     let renderer = Arc::new(Renderer::new(state.clone(), &window).unwrap());
-    let screen_sys = Arc::new(ScreenSystem::new());
 
     let game = Arc::new(Game::new(renderer.clone()));
 
-    screen_sys.push_screen(Box::new(login::Login::new(Arc::new(Mutex::new(game.characters.clone())))));
+    game.screen_sys.push_screen(Box::new(login::Login::new(Arc::new(Mutex::new(game.characters.clone())))));
 
     let mut mouse_pos = (0.0, 0.0);
     event_loop.run(move |event, _, control_flow| match event {
@@ -87,6 +81,7 @@ fn main() {
             WindowEvent::CursorMoved { position, .. } => {
                 let (width, height) = game.renderer.dimensions.get();
                 mouse_pos = (position.x / width as f64, 1.0 - position.y / height as f64);
+                game.screen_sys.on_mouse_hover(&game, mouse_pos);
             }
             WindowEvent::CursorEntered { .. } => {}
             WindowEvent::CursorLeft { .. } => {}
@@ -126,8 +121,8 @@ fn main() {
         }
         Event::RedrawRequested(_) => {
             // FIXME: perform redraw
-            let models = screen_sys.tick(0.0, &game, &window);
-            renderer.render(models, atlas.clone());
+            let models = game.screen_sys.tick(&game, &window);
+            renderer.render(models, game.atlas.clone());
         }
         Event::RedrawEventsCleared => {}
         Event::LoopDestroyed => {}
@@ -147,6 +142,7 @@ pub struct Game {
     pub game_state: Mutex<GameState>,
     pub screen_sys: Arc<ScreenSystem>,
     pub renderer: Arc<Renderer>,
+    pub atlas: Arc<Atlas>,
     pub characters: Vec<Character>,
 }
 
@@ -193,6 +189,8 @@ impl Game {
             }
         }
 
+        let atlas = Arc::new(Atlas::new(renderer.state.clone(), (1024, 1024), TextureFormat::Rgba8Uint));
+
         Self {
             players: Mutex::new(players),
             properties: unsafe { MaybeUninit::array_assume_init(properties) },
@@ -203,6 +201,7 @@ impl Game {
             game_state: Mutex::new(GameState::Login),
             screen_sys: Arc::new(ScreenSystem::new()),
             renderer,
+            atlas,
             characters: load_characters(),
         }
     }

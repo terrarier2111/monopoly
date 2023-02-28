@@ -20,13 +20,15 @@ pub trait Component: Send + Sync {
 
     fn dims(&self) -> (f32, f32);
 
-    fn on_click(&mut self, game: &Arc<Game>, click_kind: ClickKind);
+    fn on_click(&mut self, game: &Arc<Game>, click_kind: ClickKind, pos: (f32, f32));
 
     fn on_click_outside(&mut self, game: &Arc<Game>);
 
     fn on_scroll(&mut self, game: &Arc<Game>);
 
-    fn on_hover(&mut self, game: &Arc<Game>, mode: HoverMode);
+    fn on_hover(&mut self, game: &Arc<Game>, mode: HoverMode, pos: (f32, f32));
+
+    fn is_hovered(&self) -> Option<HoverMode>;
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -35,10 +37,30 @@ pub enum ClickKind {
     Release,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum HoverMode {
     Enter,
     Exit,
+}
+
+impl HoverMode {
+
+    #[inline]
+    fn reverse(self) -> HoverMode {
+        match self {
+            HoverMode::Enter => HoverMode::Exit,
+            HoverMode::Exit => HoverMode::Enter,
+        }
+    }
+
+    #[inline]
+    fn to_bool(self) -> bool {
+        match self {
+            HoverMode::Enter => true,
+            HoverMode::Exit => false,
+        }
+    }
+
 }
 
 pub struct UIComponent {
@@ -50,8 +72,8 @@ impl UIComponent {
         self.inner.build_model()
     }
 
-    pub fn on_click(&self, game: &Arc<Game>, click_kind: ClickKind) {
-        self.inner.inner.write().unwrap().on_click(game, click_kind);
+    pub fn on_click(&self, game: &Arc<Game>, click_kind: ClickKind, pos: (f32, f32)) {
+        self.inner.inner.write().unwrap().on_click(game, click_kind, pos);
         self.inner.make_dirty();
     }
 
@@ -60,16 +82,29 @@ impl UIComponent {
         self.inner.make_dirty();
     }
 
+    pub fn on_hover(&self, game: &Arc<Game>, mode: HoverMode, pos: (f32, f32)) {
+        self.inner.inner.write().unwrap().on_hover(game, mode, pos);
+        self.inner.make_dirty();
+    }
+
+    pub fn is_hovered(&self) -> Option<HoverMode> {
+        self.inner.inner.read().unwrap().is_hovered()
+    }
+
     pub fn is_inbounds(&self, pos: (f32, f32)) -> bool {
         let inner = self.inner.inner.read().unwrap();
         let dims = inner.dims();
         let inner_pos = inner.pos();
-        // println!("pos: {:?}", pos);
-        let bounds = (inner_pos.0 + dims.0, inner_pos.1 + dims.1);
-        // println!("higher than comp start ({:?}): {}", inner_pos, (pos.0 >= inner_pos.0 && pos.1 >= inner_pos.1));
-        // println!("lower than comp end: ({:?}): {}", bounds, (pos.0 <= bounds.0 && pos.1 <= bounds.1));
-        (pos.0 >= inner_pos.0 && pos.1 >= inner_pos.1) && (pos.0 <= bounds.0 && pos.1 <= bounds.1)
+        is_inbounds(dims, inner_pos, pos)
     }
+}
+
+pub fn is_inbounds(dims: (f32, f32), pos: (f32, f32), test: (f32, f32)) -> bool {
+    // println!("pos: {:?}", pos);
+    let bounds = (pos.0 + dims.0, pos.1 + dims.1);
+    // println!("higher than comp start ({:?}): {}", pos, (pos.0 >= pos.0 && pos.1 >= pos.1));
+    // println!("lower than comp end: ({:?}): {}", bounds, (pos.0 <= bounds.0 && pos.1 <= bounds.1));
+    (test.0 >= pos.0 && test.1 >= pos.1) && (test.0 <= bounds.0 && test.1 <= bounds.1)
 }
 
 pub struct InnerUIComponent {
@@ -183,10 +218,22 @@ impl Container {
         let mut found = false;
         for component in self.components.read().unwrap().iter() {
             if !found && component.is_inbounds((pos.0 as f32, pos.1 as f32)) { // FIXME: switch to using f64 instead!
-                component.on_click(game, click_kind);
+                component.on_click(game, click_kind, (pos.0 as f32, pos.1 as f32));
                 found = true;
             } else {
                 component.on_click_outside(game);
+            }
+        }
+    }
+
+    pub fn on_mouse_hover(&self, game: &Arc<Game>, pos: (f64, f64)) {
+        let mut found = false;
+        for component in self.components.read().unwrap().iter() {
+            if !found && component.is_inbounds((pos.0 as f32, pos.1 as f32)) { // FIXME: switch to using f64 instead!
+                component.on_hover(game, HoverMode::Enter, (pos.0 as f32, pos.1 as f32));
+                found = true;
+            } else if component.is_hovered() == Some(HoverMode::Enter) {
+                component.on_hover(game, HoverMode::Exit, (pos.0 as f32, pos.1 as f32));
             }
         }
     }
@@ -194,13 +241,55 @@ impl Container {
 
 pub struct Button<'a, T = ()> {
     pub inner_box: TextBox<'a>,
-    pub data: Option<Box<T>>,
-    pub on_click: Arc<Box<dyn Fn(&mut Button, &Arc<Game>) + Send + Sync>>,
+    pub data: Option<T>,
+    pub on_click: Arc<Box<dyn Fn(&mut Button<'a, T>, &Arc<Game>) + Send + Sync>>,
+    hovered: bool,
+    pressed: bool,
 }
 
-impl Component for Button<'_> {
+impl<'a, T> Button<'a, T> {
+
+    pub fn new(inner_box: TextBox<'a>, on_click: Arc<Box<dyn Fn(&mut Button<'a, T>, &Arc<Game>) + Send + Sync>>, data: Option<T>) -> Self {
+        Self {
+            inner_box,
+            data,
+            on_click,
+            hovered: false,
+            pressed: false,
+        }
+    }
+
+}
+
+impl<T: Send + Sync> Component for Button<'_, T> {
     fn build_model(&self) -> Model {
-        self.inner_box.build_model()
+        let base_model = self.inner_box.build_model();
+        let mut vertices = base_model.vertices;
+        for vert in vertices.iter_mut() {
+            let scale = if self.hovered {
+                0.8
+            } else {
+                1.0
+            } * if self.pressed {
+                    0.8
+                } else {
+                    1.0
+                };
+            match vert {
+                Vertex::Color { color, .. } => {
+                    color[0] *= scale;
+                    color[1] *= scale;
+                    color[2] *= scale;
+                }
+                Vertex::Atlas { color_scale_factor, .. } => {
+                    *color_scale_factor = scale;
+                }
+            }
+        }
+        Model {
+            vertices,
+            color_src: base_model.color_src,
+        }
     }
 
     fn do_render(&self, game: &Arc<Game>) {
@@ -215,16 +304,35 @@ impl Component for Button<'_> {
         self.inner_box.dims()
     }
 
-    fn on_click(&mut self, game: &Arc<Game>, _click_kind: ClickKind) {
-        let func = self.on_click.clone();
-        func(self, game);
+    fn on_click(&mut self, game: &Arc<Game>, click_kind: ClickKind, pos: (f32, f32)) {
+        if click_kind == ClickKind::Release {
+            self.pressed = false;
+            // only perform the actual click if we are inbounds in case the user changes their mind and doesn't
+            // want to click anymore.
+            if is_inbounds(self.dims(), self.pos(), pos) {
+                let func = self.on_click.clone();
+                func(self, game);
+            }
+        } else {
+            self.pressed = true;
+        }
     }
 
     fn on_click_outside(&mut self, _game: &Arc<Game>) {}
 
     fn on_scroll(&mut self, _game: &Arc<Game>) {}
 
-    fn on_hover(&mut self, _game: &Arc<Game>, _mode: HoverMode) {}
+    fn on_hover(&mut self, _game: &Arc<Game>, mode: HoverMode, _pos: (f32, f32)) {
+        self.hovered = mode.to_bool();
+    }
+
+    fn is_hovered(&self) -> Option<HoverMode> {
+        if self.hovered {
+            Some(HoverMode::Enter)
+        } else {
+            Some(HoverMode::Exit)
+        }
+    }
 }
 
 pub struct ColorBox {
@@ -296,13 +404,17 @@ impl Component for ColorBox {
         (self.width, self.height)
     }
 
-    fn on_click(&mut self, _game: &Arc<Game>, _click_kind: ClickKind) {}
+    fn on_click(&mut self, _game: &Arc<Game>, _click_kind: ClickKind, _pos: (f32, f32)) {}
 
     fn on_click_outside(&mut self, _game: &Arc<Game>) {}
 
     fn on_scroll(&mut self, _game: &Arc<Game>) {}
 
-    fn on_hover(&mut self, _game: &Arc<Game>, _mode: HoverMode) {}
+    fn on_hover(&mut self, _game: &Arc<Game>, _mode: HoverMode, _pos: (f32, f32)) {}
+
+    fn is_hovered(&self) -> Option<HoverMode> {
+        None
+    }
 }
 
 pub struct TextBox<'a> {
@@ -311,8 +423,6 @@ pub struct TextBox<'a> {
     pub height: f32,
     pub coloring: Coloring<6>,
     pub text: TextSection<'a>,
-    hovered: bool,
-    pressed: bool,
 }
 
 impl<'a> TextBox<'a> {
@@ -324,8 +434,6 @@ impl<'a> TextBox<'a> {
             height,
             coloring,
             text,
-            hovered: false,
-            pressed: false,
         }
     }
 
@@ -354,30 +462,13 @@ impl Component for TextBox<'_> {
                 for (i, pos) in vertices.into_iter().enumerate() {
                     ret.push(Vertex::Color {
                         pos,
-                        color: colors[i].scale(if self.hovered {
-                            0.8
-                        } else {
-                            1.0
-                        }).scale(if self.pressed {
-                            0.8
-                        } else {
-                            1.0
-                        }).into_array(),
+                        color: colors[i].into_array(),
                     });
                 }
                 ret
             }
             Coloring::Tex(tex) => {
                 let mut ret = Vec::with_capacity(6);
-                let color_scale_factor = if self.hovered {
-                    0.8
-                } else {
-                    1.0
-                } * if self.pressed {
-                    0.8
-                } else {
-                    1.0
-                };
                 for pos in vertices {
                     ret.push(Vertex::Atlas {
                         pos,
@@ -385,7 +476,7 @@ impl Component for TextBox<'_> {
                         uv: match &tex.ty {
                             TexTy::Atlas(atlas) => atlas.uv().into_tuple(),
                         },
-                        color_scale_factor,
+                        color_scale_factor: 1.0,
                     });
                 }
                 ret
@@ -422,7 +513,7 @@ impl Component for TextBox<'_> {
         (self.width, self.height)
     }
 
-    fn on_click(&mut self, _game: &Arc<Game>, _click_kind: ClickKind) {
+    fn on_click(&mut self, _game: &Arc<Game>, _click_kind: ClickKind, _pos: (f32, f32)) {
         // FIXME: add release and down as a parameter and use it to handle pressed
     }
 
@@ -430,8 +521,10 @@ impl Component for TextBox<'_> {
 
     fn on_scroll(&mut self, _game: &Arc<Game>) {}
 
-    fn on_hover(&mut self, _game: &Arc<Game>, _mode: HoverMode) {
-        self.hovered = true;
+    fn on_hover(&mut self, _game: &Arc<Game>, _mode: HoverMode, _pos: (f32, f32)) {}
+
+    fn is_hovered(&self) -> Option<HoverMode> {
+        None
     }
 }
 
@@ -443,6 +536,18 @@ pub struct TextSection<'a, X = Extra> {
     pub texts: Vec</*Arc<*/String/*>*/>,
 }
 
+/*
+impl<'a, X> TextSection<'a, X> {
+
+    fn calculate_bounds(&self) -> (usize, usize) {
+        for text in self.text.iter() {
+
+        }
+    }
+
+}*/
+
+/*
 pub struct InputBox<'a> {
     pub inner_box: TextBox<'a>,
     active: bool,
@@ -451,7 +556,34 @@ pub struct InputBox<'a> {
 impl Component for InputBox<'_> {
     fn build_model(&self) -> Model {
         // FIXME: handle inner active!
-        self.inner_box.build_model()
+        let base_model = self.inner_box.build_model();
+        let mut vertices = base_model.vertices;
+        let color_src = base_model.color_src;
+
+        let tmp = self.inner_box.text
+
+        let new_vertices = [
+            [-1.0 + x_off, -1.0 + y_off],
+            [2.0 * self.width - 1.0 + x_off, -1.0 + y_off],
+            [
+                2.0 * self.width - 1.0 + x_off,
+                2.0 * self.height - 1.0 + y_off,
+            ],
+            [-1.0 + x_off, -1.0 + y_off],
+            [-1.0 + x_off, 2.0 * self.height - 1.0 + y_off],
+            [
+                2.0 * self.width - 1.0 + x_off,
+                2.0 * self.height - 1.0 + y_off,
+            ],
+        ];
+        wgpu_glyph::GlyphCruncher::fonts()
+
+        vertices.push();
+
+        Model {
+            vertices,
+            color_src,
+        }
     }
 
     fn do_render(&self, game: &Arc<Game>) {
@@ -477,4 +609,4 @@ impl Component for InputBox<'_> {
     fn on_scroll(&mut self, _game: &Arc<Game>) {}
 
     fn on_hover(&mut self, _game: &Arc<Game>, _mode: HoverMode) {}
-}
+}*/

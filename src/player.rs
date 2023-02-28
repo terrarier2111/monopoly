@@ -32,7 +32,11 @@ pub fn load_characters() -> Vec<Character> {
         serde_json::from_str(&*buf).unwrap()
     } else {
         let mut file = File::create(CHARACTER_PATH).unwrap();
-        let characters = vec![];
+        let characters = vec![Character {
+            name: "Test1".to_string(),
+            id: 0,
+            model_path: "./Test.png".to_string(),
+        }];
         file.write_all(serde_json::to_string(&characters).unwrap().as_ref()).unwrap();
         characters
     }

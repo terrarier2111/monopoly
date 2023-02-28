@@ -1,10 +1,14 @@
+use std::fs::File;
+use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use crate::render::Renderer;
+use crate::render::{Renderer, TexTriple, TexTy};
 use crate::screen_sys::Screen;
-use crate::ui::{Button, Color, ColorBox, Coloring, Container, TextBox, TextSection};
-use crate::{Game, ScreenSystem};
+use crate::ui::{Button, Color, ColorBox, Coloring, Container, Tex, TextBox, TextSection};
+use crate::{Game, ScreenSystem, ui};
 use std::sync::{Arc, Mutex, RwLock};
 use rand::Rng;
+use wgpu::{Sampler, SamplerDescriptor, TextureDimension};
+use wgpu_biolerless::TextureBuilder;
 use wgpu_glyph::{HorizontalAlign, Layout, Text, VerticalAlign};
 use crate::player::Character;
 use crate::utils::DARK_GRAY_UI;
@@ -28,27 +32,44 @@ impl Screen for Login {
     fn on_active(&mut self, game: &Arc<Game>) {
         let entry_offset = 1.0 / (self.chars.lock().unwrap().len() + 3) as f32;
         for char in self.chars.lock().unwrap().iter().enumerate() {
-            self.container.add(Arc::new(RwLock::new(Box::new(Button {
-                inner_box: TextBox::new(
+            let mut file = File::open(&char.1.name).unwrap();
+            let mut buf = vec![];
+            file.read_to_end(&mut buf).unwrap();
+            let buf = Arc::new(buf);
+            self.container.add(Arc::new(RwLock::new(Box::new(Button::new(
+                TextBox::new(
                     (entry_offset * 1.5, 1.0 - ((char.0 + 1) as f32 * entry_offset)),
-                    0.2,
                     0.1,
-                    Coloring::Color([
+                    0.2,
+                    Coloring::Tex(Tex {
+                        ty: game.atlas.alloc()/*TexTy::Simple(TexTriple {
+                            tex: game.renderer.state.create_texture(TextureBuilder::new().data(&buf).format(game.renderer.state.format()).texture_dimension(TextureDimension::D1).dimensions()),
+                            view: ,
+                            sampler: game.renderer.state.device().create_sampler(&SamplerDescriptor {
+                                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                                mag_filter: wgpu::FilterMode::Linear,
+                                min_filter: wgpu::FilterMode::Nearest,
+                                mipmap_filter: wgpu::FilterMode::Nearest,
+                                ..Default::default()
+                            }),
+                        })*/,
+                    })/*Coloring::Color([
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
-                    ]),
+                    ])*/,
                     TextSection {
                         layout: Layout::default_single_line().v_align(VerticalAlign::Bottom/*Bottom*//*VerticalAlign::Center*/).h_align(HorizontalAlign::Left),
                         text: vec![Text::default().with_scale(30.0)],
                         texts: vec![char.1.name.clone()],
                     }
                 ),
-                data: None,
-                on_click: Arc::new(Box::new(|button, client| {
+                Arc::new(Box::new(|button, client| {
                     println!("test!!");
                     /*match button.inner_box.coloring {
                         Coloring::Color(mut color) => {
@@ -63,8 +84,9 @@ impl Screen for Login {
                     }
                     button.inner_box.pos.0 += 0.1;*/
 
-                }))
-            }))));
+                })),
+                Some(buf)
+                )))));
         }
         /*self.container.add(Arc::new(RwLock::new(Box::new(ColorBox {
             pos: (0.25, 0.25),
@@ -158,7 +180,7 @@ impl Screen for Login {
 
     fn on_deactive(&mut self, _game: &Arc<Game>) {}
 
-    fn tick(&mut self, _game: &Arc<Game>, _delta: f64) {}
+    fn tick(&mut self, _game: &Arc<Game>) {}
 
     fn is_closable(&self) -> bool {
         false
