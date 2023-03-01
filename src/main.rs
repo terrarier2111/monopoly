@@ -189,7 +189,7 @@ impl Game {
             }
         }
 
-        let atlas = Arc::new(Atlas::new(renderer.state.clone(), (1024, 1024), TextureFormat::Rgba8Uint));
+        let atlas = Arc::new(Atlas::new(renderer.state.clone(), (1024, 1024), TextureFormat::Rgba8Unorm));
 
         Self {
             players: Mutex::new(players),
@@ -208,7 +208,10 @@ impl Game {
 
     pub fn tick(&self) {
         let curr_player = self.curr_player.load(Ordering::Acquire);
-        self.curr_player.store((curr_player + 1) % self.players.lock().unwrap().len(), Ordering::Release);
+        let players = self.players.lock().unwrap().len();
+        if players != 0 {
+            self.curr_player.store((curr_player + 1) % players, Ordering::Release);
+        }
 
     }
 

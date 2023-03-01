@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use dashmap::DashMap;
-use wgpu::{BindGroupLayoutEntry, BindingType, BlendState, BufferAddress, BufferUsages, Color, ColorTargetState, ColorWrites, LoadOp, Operations, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPipeline, Sampler, SamplerBindingType, ShaderSource, ShaderStages, Texture, TextureFormat, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
+use wgpu::{BindGroupEntry, BindGroupLayoutEntry, BindingResource, BindingType, BlendState, BufferAddress, BufferUsages, Color, ColorTargetState, ColorWrites, LoadOp, Operations, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPipeline, Sampler, SamplerBindingType, ShaderSource, ShaderStages, Texture, TextureFormat, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 use wgpu::util::StagingBelt;
 use wgpu_biolerless::{
     FragmentShaderState, ModuleSrc, PipelineBuilder, ShaderModuleSources, State, VertexShaderState,
@@ -21,6 +21,7 @@ use crate::utils::LIGHT_GRAY_GPU;
 
 pub struct Renderer {
     pub state: Arc<State>,
+    atlas_pipeline: RenderPipeline,
     tex_pipeline: RenderPipeline,
     color_pipeline: RenderPipeline,
     pub dimensions: Dimensions,
@@ -57,7 +58,8 @@ impl Renderer {
         });
         let (width, height) = window.window_size();
         Ok(Self {
-            tex_pipeline: Self::atlas_pipeline(&state),
+            atlas_pipeline: Self::atlas_pipeline(&state),
+            tex_pipeline: Self::tex_pipeline(&state),
             color_pipeline: Self::color_pipeline(&state),
             state,
             dimensions: Dimensions::new(width, height),
@@ -77,15 +79,16 @@ impl Renderer {
                         atlas.update(&mut encoder);
                     }*/
                     atlas.update(&mut encoder);
-                    let mut atlas_models: HashMap<AtlasId, Vec<AtlasVertex>> = HashMap::new();
+                    let mut atlas_models: HashMap<AtlasId, Vec<TextureVertex>> = HashMap::new();
                     let mut color_models = vec![];
+                    let mut texture_models = vec![];
                     for model in models {
-                        match &model.color_src {
+                        match model.color_src.clone() { // FIXME: try getting rid of this clone!
                             ColorSource::PerVert => {
                                 color_models.extend(model.vertices.into_iter().map(
                                     |vert| match vert {
                                         Vertex::Color { pos, color } => ColorVertex { pos, color },
-                                        Vertex::Atlas { .. } => abort(), // FIXME: is it really necessary to abort because of perf stuff?
+                                        Vertex::Texture { .. } => abort(), // FIXME: is it really necessary to abort because of perf stuff?
                                     },
                                 ));
                             }
@@ -93,16 +96,25 @@ impl Renderer {
                                 // FIXME: make different atlases work!
                                 let vertices = model.vertices.into_iter().map(|vert| match vert {
                                     Vertex::Color { .. } => abort(),
-                                    Vertex::Atlas { pos, alpha, uv, color_scale_factor } => {
-                                        AtlasVertex { pos, alpha, uv, color_scale_factor }
+                                    Vertex::Texture { pos, alpha, uv, color_scale_factor } => {
+                                        TextureVertex { pos, alpha, uv, color_scale_factor }
                                     }
                                 });
                                 if let Some(mut models) = atlas_models.get_mut(&atlas.id()) {
                                     models.extend(vertices);
                                 } else {
                                     atlas_models
-                                        .insert(atlas.id(), vertices.collect::<Vec<AtlasVertex>>());
+                                        .insert(atlas.id(), vertices.collect::<Vec<TextureVertex>>());
                                 }
+                            }
+                            ColorSource::Tex(tex) => {
+                                let vertices = model.vertices.into_iter().map(|vert| match vert {
+                                    Vertex::Color { .. } => abort(),
+                                    Vertex::Texture { pos, alpha, uv, color_scale_factor } => {
+                                        TextureVertex { pos, alpha, uv, color_scale_factor }
+                                    }
+                                });
+                                texture_models.push((tex, vertices.collect::<Vec<_>>()));
                             }
                         }
                     }
@@ -125,6 +137,53 @@ impl Renderer {
                         render_pass.set_vertex_buffer(0, color_buffer.slice(..));
                         render_pass.set_pipeline(&self.color_pipeline);
                         render_pass.draw(0..(color_models.len() as u32), 0..1);
+                    }
+
+                    for texture_models in texture_models.iter() {
+                        println!("rendering tex model!");
+                        let texture_buffer =
+                            state.create_buffer(texture_models.1.as_slice(), BufferUsages::VERTEX);
+                        let bgl = state.create_bind_group_layout(&[BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: ShaderStages::FRAGMENT,
+                            ty: BindingType::Texture {
+                                multisampled: false,
+                                view_dimension: TextureViewDimension::D2,
+                                sample_type: TextureSampleType::Float { filterable: true },
+                            },
+                            count: None,
+                        }, BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: ShaderStages::FRAGMENT,
+                            ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                            count: None,
+                        }]);
+                        let bg = state.create_bind_group(&bgl, &[BindGroupEntry {
+                            binding: 0,
+                            resource: BindingResource::TextureView(&texture_models.0.view),
+                        }, BindGroupEntry {
+                            binding: 1,
+                            resource: BindingResource::Sampler(&texture_models.0.sampler),
+                        }]);
+                        {
+                            let attachments = [Some(RenderPassColorAttachment {
+                                view: &view,
+                                resolve_target: None,
+                                ops: Operations {
+                                    load: LoadOp::Clear(LIGHT_GRAY_GPU),
+                                    store: true,
+                                },
+                            })];
+                            let mut render_pass =
+                                state.create_render_pass(&mut encoder, &attachments, None);
+                            // let buffer = state.create_buffer(atlas_models.as_slice(), BufferUsages::VERTEX);
+                            // render_pass.set_vertex_buffer(0, buffer.slice(..));
+
+                            render_pass.set_vertex_buffer(0, texture_buffer.slice(..));
+                            render_pass.set_bind_group(0, &bg, &[]);
+                            render_pass.set_pipeline(&self.tex_pipeline);
+                            render_pass.draw(0..(texture_models.1.len() as u32), 0..1);
+                        }
                     }
                     for glyph in self.glyphs.lock().unwrap().iter() {
                         let mut staging_belt = glyph.staging_belt.lock().unwrap();
@@ -167,7 +226,7 @@ impl Renderer {
         PipelineBuilder::new()
             .vertex(VertexShaderState {
                 entry_point: "main_vert",
-                buffers: &[AtlasVertex::desc()],
+                buffers: &[TextureVertex::desc()],
             })
             .fragment(FragmentShaderState {
                 entry_point: "main_frag",
@@ -179,6 +238,49 @@ impl Renderer {
             })
             .shader_src(ShaderModuleSources::Single(ModuleSrc::Source(
                 ShaderSource::Wgsl(include_str!("ui_atlas.wgsl").into()),
+            )))
+            .layout(&state.create_pipeline_layout(
+                &[&state.create_bind_group_layout(&[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: TextureViewDimension::D2,
+                            sample_type: TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::FRAGMENT,
+                        // This should match the filterable field of the
+                        // corresponding Texture entry above.
+                        ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ])],
+                &[],
+            ))
+            .build(state)
+    }
+
+    fn tex_pipeline(state: &State) -> RenderPipeline {
+        PipelineBuilder::new()
+            .vertex(VertexShaderState {
+                entry_point: "main_vert",
+                buffers: &[TextureVertex::desc()],
+            })
+            .fragment(FragmentShaderState {
+                entry_point: "main_frag",
+                targets: &[Some(ColorTargetState {
+                    format: state.format(),
+                    blend: Some(BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                })],
+            })
+            .shader_src(ShaderModuleSources::Single(ModuleSrc::Source(
+                ShaderSource::Wgsl(include_str!("ui_tex.wgsl").into()),
             )))
             .layout(&state.create_pipeline_layout(
                 &[&state.create_bind_group_layout(&[
@@ -228,12 +330,12 @@ pub struct Model {
 pub enum ColorSource {
     PerVert,
     Atlas(Arc<Atlas>),
-    // FIXME: add single tex
+    Tex(Arc<TexTriple>),
 }
 
 pub enum TexTy {
     Atlas(Arc<AtlasAlloc>),
-    // Simple(TexTriple), // FIXME: implement this!
+    Simple(Arc<TexTriple>),
 }
 
 #[derive(Copy, Clone)]
@@ -242,7 +344,7 @@ pub enum Vertex {
         pos: [f32; 2],
         color: [f32; 4],
     },
-    Atlas {
+    Texture {
         pos: [f32; 2],
         alpha: f32,
         uv: (u32, u32),
@@ -278,17 +380,21 @@ impl ColorVertex {
     }
 }
 
-struct AtlasVertex {
+#[derive(Zeroable, Copy, Clone)]
+#[repr(C)]
+struct TextureVertex {
     pos: [f32; 2],
     alpha: f32,
     uv: (u32, u32),
     color_scale_factor: f32,
 }
 
-impl AtlasVertex {
+unsafe impl bytemuck::Pod for TextureVertex {}
+
+impl TextureVertex {
     fn desc<'a>() -> VertexBufferLayout<'a> {
         VertexBufferLayout {
-            array_stride: size_of::<AtlasVertex>() as BufferAddress,
+            array_stride: size_of::<TextureVertex>() as BufferAddress,
             step_mode: VertexStepMode::Vertex,
             attributes: &[
                 VertexAttribute {

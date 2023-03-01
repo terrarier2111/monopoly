@@ -281,7 +281,7 @@ impl<T: Send + Sync> Component for Button<'_, T> {
                     color[1] *= scale;
                     color[2] *= scale;
                 }
-                Vertex::Atlas { color_scale_factor, .. } => {
+                Vertex::Texture { color_scale_factor, .. } => {
                     *color_scale_factor = scale;
                 }
             }
@@ -373,11 +373,12 @@ impl Component for ColorBox {
             Coloring::Tex(tex) => {
                 let mut ret = Vec::with_capacity(6);
                 for pos in vertices {
-                    ret.push(Vertex::Atlas {
+                    ret.push(Vertex::Texture {
                         pos,
                         alpha: 1.0, // FIXME: make this actually parameterized!
                         uv: match &tex.ty {
                             TexTy::Atlas(atlas) => atlas.uv().into_tuple(),
+                            TexTy::Simple(tex) => (0, 0),
                         },
                         color_scale_factor: 1.0,
                     });
@@ -391,6 +392,7 @@ impl Component for ColorBox {
                 Coloring::Color(_) => ColorSource::PerVert,
                 Coloring::Tex(tex) => match &tex.ty {
                     TexTy::Atlas(atlas) => ColorSource::Atlas(atlas.atlas().clone()),
+                    TexTy::Simple(tex) => ColorSource::Tex(tex.clone()),
                 },
             },
         }
@@ -470,11 +472,12 @@ impl Component for TextBox<'_> {
             Coloring::Tex(tex) => {
                 let mut ret = Vec::with_capacity(6);
                 for pos in vertices {
-                    ret.push(Vertex::Atlas {
+                    ret.push(Vertex::Texture {
                         pos,
                         alpha: 1.0, // FIXME: make this actually parameterized!
                         uv: match &tex.ty {
                             TexTy::Atlas(atlas) => atlas.uv().into_tuple(),
+                            TexTy::Simple(tex) => (0, 0),
                         },
                         color_scale_factor: 1.0,
                     });
@@ -488,6 +491,7 @@ impl Component for TextBox<'_> {
                 Coloring::Color(_) => ColorSource::PerVert,
                 Coloring::Tex(tex) => match &tex.ty {
                     TexTy::Atlas(atlas) => ColorSource::Atlas(atlas.atlas().clone()),
+                    TexTy::Simple(tex) => ColorSource::Tex(tex.clone()),
                 },
             },
         }

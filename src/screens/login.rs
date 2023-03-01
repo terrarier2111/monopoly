@@ -6,8 +6,9 @@ use crate::screen_sys::Screen;
 use crate::ui::{Button, Color, ColorBox, Coloring, Container, Tex, TextBox, TextSection};
 use crate::{Game, ScreenSystem, ui};
 use std::sync::{Arc, Mutex, RwLock};
+use image::{EncodableLayout, GenericImageView};
 use rand::Rng;
-use wgpu::{Sampler, SamplerDescriptor, TextureDimension};
+use wgpu::{Sampler, SamplerDescriptor, TextureAspect, TextureDimension, TextureFormat, TextureViewDescriptor};
 use wgpu_biolerless::TextureBuilder;
 use wgpu_glyph::{HorizontalAlign, Layout, Text, VerticalAlign};
 use crate::player::Character;
@@ -32,19 +33,21 @@ impl Screen for Login {
     fn on_active(&mut self, game: &Arc<Game>) {
         let entry_offset = 1.0 / (self.chars.lock().unwrap().len() + 3) as f32;
         for char in self.chars.lock().unwrap().iter().enumerate() {
-            let mut file = File::open(&char.1.name).unwrap();
-            let mut buf = vec![];
-            file.read_to_end(&mut buf).unwrap();
-            let buf = Arc::new(buf);
+            let mut buf = image::open(&char.1.model_path).unwrap();
+            // let mut buf = image::load_from_memory(include_bytes!("../../config/joda.jpg")).unwrap();
+            let buf = Arc::new(buf.into_rgba8());
+            let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
+                .format(TextureFormat::Rgba8UnormSrgb/*TextureFormat::Rgba8Uint*/).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));
+            let view = tex.create_view(&TextureViewDescriptor::default());
             self.container.add(Arc::new(RwLock::new(Box::new(Button::new(
                 TextBox::new(
-                    (entry_offset * 1.5, 1.0 - ((char.0 + 1) as f32 * entry_offset)),
+                    (((char.0 + 1) as f32 * entry_offset), 1.0 - entry_offset * 1.5),
                     0.1,
                     0.2,
                     Coloring::Tex(Tex {
-                        ty: game.atlas.alloc()/*TexTy::Simple(TexTriple {
-                            tex: game.renderer.state.create_texture(TextureBuilder::new().data(&buf).format(game.renderer.state.format()).texture_dimension(TextureDimension::D1).dimensions()),
-                            view: ,
+                        ty: TexTy::Simple(Arc::new(TexTriple {
+                            tex,
+                            view,
                             sampler: game.renderer.state.device().create_sampler(&SamplerDescriptor {
                                 address_mode_u: wgpu::AddressMode::ClampToEdge,
                                 address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -54,7 +57,7 @@ impl Screen for Login {
                                 mipmap_filter: wgpu::FilterMode::Nearest,
                                 ..Default::default()
                             }),
-                        })*/,
+                        }))/*TexTy::Atlas(game.atlas.alloc(char.1.model_path.clone(), buf.dimensions(), buf.as_bytes()))*//*TexTy::Simple()*/,
                     })/*Coloring::Color([
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
@@ -69,7 +72,7 @@ impl Screen for Login {
                         texts: vec![char.1.name.clone()],
                     }
                 ),
-                Arc::new(Box::new(|button, client| {
+                Arc::new(Box::new(|button, game| {
                     println!("test!!");
                     /*match button.inner_box.coloring {
                         Coloring::Color(mut color) => {

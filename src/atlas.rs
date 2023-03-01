@@ -1,6 +1,7 @@
 use crate::render::TexTriple;
 use guillotiere::{size2, AllocId, Allocation, AtlasAllocator};
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -127,6 +128,7 @@ impl Atlas {
     }
 
     pub fn update(&self, cmd_encoder: &mut CommandEncoder) {
+        // FIXME: even if this is empty, we get OOB errors
         let mut write_queue = self.write_queue.lock().unwrap();
         if !write_queue.is_empty() {
             let new_size = self.alloc.lock().unwrap().size().to_tuple();
@@ -215,8 +217,8 @@ impl Atlas {
             content,
             ImageDataLayout {
                 offset: 1,
-                bytes_per_row: None, // FIXME: can we pass the actual values, so we get more optimizations?
-                rows_per_image: None, // FIXME: can we pass the actual values, so we get more optimizations?
+                bytes_per_row: None/*NonZeroU32::new(4 * size.0)*/, // FIXME: can we pass the actual values, so we get more optimizations?
+                rows_per_image: None/*NonZeroU32::new(size.1)*/, // FIXME: can we pass the actual values, so we get more optimizations?
             },
             Extent3d {
                 width: size.0,
