@@ -218,7 +218,6 @@ impl ScreenSystem {
 
     pub fn on_mouse_hover(&self, game: &Arc<Game>, pos: (f64, f64)) {
         if let Some(screen) = self.screens.clone().read().unwrap().last() {
-            println!("hovered0!");
             screen
                 .screen
                 .clone()

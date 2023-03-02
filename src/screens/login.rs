@@ -58,6 +58,7 @@ impl Screen for Login {
                                 ..Default::default()
                             }),
                         }))/*TexTy::Atlas(game.atlas.alloc(char.1.model_path.clone(), buf.dimensions(), buf.as_bytes()))*//*TexTy::Simple()*/,
+                        grayscale_conv: false,
                     })/*Coloring::Color([
                         DARK_GRAY_UI,
                         DARK_GRAY_UI,
@@ -74,6 +75,12 @@ impl Screen for Login {
                 ),
                 Arc::new(Box::new(|button, game| {
                     println!("test!!");
+                    match &mut button.inner_box.coloring {
+                        Coloring::Color(_) => {}
+                        Coloring::Tex(tex) => {
+                            tex.grayscale_conv = true;
+                        }
+                    }
                     /*match button.inner_box.coloring {
                         Coloring::Color(mut color) => {
                             color[0].r += 0.1;

@@ -3,6 +3,7 @@ struct VertIn {
     @location(1) uv_coords: vec2<f32>, // FIXME: do we even need this?
     @location(2) alpha_scale_factor: f32,
     @location(3) color_scale_factor: f32,
+    @location(4) metadata: u32,
 };
 
 struct VertOut {
@@ -10,6 +11,7 @@ struct VertOut {
     @location(0) uv_coords: vec2<f32>,
     @location(1) alpha_scale_factor: f32,
     @location(2) color_scale_factor: f32,
+    @location(3) metadata: u32,
 };
 
 @vertex

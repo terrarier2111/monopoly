@@ -163,6 +163,7 @@ impl Color {
 pub struct Tex {
     // pub alpha: f32, // FIXME: try readding this!
     pub ty: TexTy,
+    pub grayscale_conv: bool,
 }
 
 pub enum Coloring<const VERTICES: usize> {
@@ -387,9 +388,10 @@ impl Component for ColorBox {
                         alpha: 1.0, // FIXME: make this actually parameterized!
                         uv: match &tex.ty {
                             TexTy::Atlas(atlas) => UvKind::Absolute(atlas.uv().into_tuple()),
-                            TexTy::Simple(tex) => COLOR_UV_OFFSETS[idx],
+                            TexTy::Simple(_) => UvKind::Relative(COLOR_UV_OFFSETS[idx]),
                         },
                         color_scale_factor: 1.0,
+                        grayscale_conv: tex.grayscale_conv,
                     });
                 }
                 ret
@@ -489,6 +491,7 @@ impl Component for TextBox<'_> {
                             TexTy::Simple(_) => UvKind::Relative(COLOR_UV_OFFSETS[idx]),
                         },
                         color_scale_factor: 1.0,
+                        grayscale_conv: tex.grayscale_conv,
                     });
                 }
                 ret

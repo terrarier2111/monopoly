@@ -96,11 +96,19 @@ impl Renderer {
                                 // FIXME: make different atlases work!
                                 let vertices = model.vertices.into_iter().map(|vert| match vert {
                                     Vertex::Color { .. } => unreachable!(),
-                                    Vertex::Texture { pos, alpha, uv, color_scale_factor } => {
+                                    Vertex::Texture { pos, alpha, uv, color_scale_factor, grayscale_conv } => {
                                         AbsoluteTextureVertex { pos, alpha, uv: match uv {
                                             UvKind::Absolute(abs) => abs,
                                             UvKind::Relative(_) => unreachable!(),
-                                        }, color_scale_factor }
+                                        }, color_scale_factor,
+                                            meta: {
+                                                let mut meta = 0;
+                                                if grayscale_conv {
+                                                    meta |= GRAYSCALE_CONV_FLAG;
+                                                }
+                                                meta
+                                            },
+                                        }
                                     }
                                 });
                                 if let Some(mut models) = atlas_models.get_mut(&atlas.id()) {
@@ -113,11 +121,19 @@ impl Renderer {
                             ColorSource::Tex(tex) => {
                                 let vertices = model.vertices.into_iter().map(|vert| match vert {
                                     Vertex::Color { .. } => abort(),
-                                    Vertex::Texture { pos, alpha, uv, color_scale_factor } => {
+                                    Vertex::Texture { pos, alpha, uv, color_scale_factor, grayscale_conv } => {
                                         RelativeTextureVertex { pos, alpha, uv: match uv {
                                             UvKind::Absolute(_) => unreachable!(),
                                             UvKind::Relative(rel) => rel,
-                                        }, color_scale_factor }
+                                        }, color_scale_factor,
+                                            meta: {
+                                                let mut meta = 0;
+                                                if grayscale_conv {
+                                                    meta |= GRAYSCALE_CONV_FLAG;
+                                                }
+                                                meta
+                                            },
+                                        }
                                     }
                                 });
                                 texture_models.push((tex, vertices.collect::<Vec<_>>()));
@@ -146,7 +162,6 @@ impl Renderer {
                     }
 
                     for texture_models in texture_models.iter() {
-                        println!("rendering tex model!");
                         let texture_buffer =
                             state.create_buffer(texture_models.1.as_slice(), BufferUsages::VERTEX);
                         let bgl = state.create_bind_group_layout(&[BindGroupLayoutEntry {
@@ -355,6 +370,7 @@ pub enum Vertex {
         alpha: f32,
         uv: UvKind,
         color_scale_factor: f32,
+        grayscale_conv: bool,
     },
 }
 
@@ -392,6 +408,8 @@ impl ColorVertex {
     }
 }
 
+const GRAYSCALE_CONV_FLAG: u32 = 1 << 0;
+
 #[derive(Zeroable, Copy, Clone)]
 #[repr(C)]
 struct AbsoluteTextureVertex {
@@ -399,6 +417,7 @@ struct AbsoluteTextureVertex {
     uv: (u32, u32),
     alpha: f32,
     color_scale_factor: f32,
+    meta: u32,
 }
 
 unsafe impl bytemuck::Pod for AbsoluteTextureVertex {}
@@ -429,6 +448,11 @@ impl AbsoluteTextureVertex {
                     shader_location: 3,
                     format: VertexFormat::Float32,
                 },
+                VertexAttribute {
+                    offset: size_of::<[f32; 6]>() as BufferAddress,
+                    shader_location: 4,
+                    format: VertexFormat::Uint32,
+                },
             ],
         }
     }
@@ -441,6 +465,7 @@ struct RelativeTextureVertex {
     uv: (f32, f32),
     alpha: f32,
     color_scale_factor: f32,
+    meta: u32,
 }
 
 unsafe impl bytemuck::Pod for RelativeTextureVertex {}
@@ -470,6 +495,11 @@ impl RelativeTextureVertex {
                     offset: size_of::<[f32; 5]>() as BufferAddress,
                     shader_location: 3,
                     format: VertexFormat::Float32,
+                },
+                VertexAttribute {
+                    offset: size_of::<[f32; 6]>() as BufferAddress,
+                    shader_location: 4,
+                    format: VertexFormat::Uint32,
                 },
             ],
         }
