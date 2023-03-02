@@ -1,5 +1,5 @@
 use crate::atlas::UV;
-use crate::render::{ColorSource, Model, TexTriple, TexTy, Vertex};
+use crate::render::{ColorSource, Model, TexTriple, TexTy, UvKind, Vertex};
 use crate::screen_sys::ScreenSystem;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -106,6 +106,15 @@ pub fn is_inbounds(dims: (f32, f32), pos: (f32, f32), test: (f32, f32)) -> bool 
     // println!("lower than comp end: ({:?}): {}", bounds, (pos.0 <= bounds.0 && pos.1 <= bounds.1));
     (test.0 >= pos.0 && test.1 >= pos.1) && (test.0 <= bounds.0 && test.1 <= bounds.1)
 }
+
+const COLOR_UV_OFFSETS: [(f32, f32); 6] = [
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (0.0, 0.0),
+            (0.0, 1.0),
+            (1.0, 1.0),
+        ];
 
 pub struct InnerUIComponent {
     inner: Arc<RwLock<Box<dyn Component>>>, // FIXME: should we prefer a Mutex over a Rwlock?
@@ -372,13 +381,13 @@ impl Component for ColorBox {
             }
             Coloring::Tex(tex) => {
                 let mut ret = Vec::with_capacity(6);
-                for pos in vertices {
+                for (idx, pos) in vertices.into_iter().enumerate() {
                     ret.push(Vertex::Texture {
                         pos,
                         alpha: 1.0, // FIXME: make this actually parameterized!
                         uv: match &tex.ty {
-                            TexTy::Atlas(atlas) => atlas.uv().into_tuple(),
-                            TexTy::Simple(tex) => (0, 0),
+                            TexTy::Atlas(atlas) => UvKind::Absolute(atlas.uv().into_tuple()),
+                            TexTy::Simple(_) => UvKind::Relative(COLOR_UV_OFFSETS[idx]),
                         },
                         color_scale_factor: 1.0,
                     });
@@ -471,13 +480,13 @@ impl Component for TextBox<'_> {
             }
             Coloring::Tex(tex) => {
                 let mut ret = Vec::with_capacity(6);
-                for pos in vertices {
+                for (idx, pos) in vertices.into_iter().enumerate() {
                     ret.push(Vertex::Texture {
                         pos,
                         alpha: 1.0, // FIXME: make this actually parameterized!
                         uv: match &tex.ty {
-                            TexTy::Atlas(atlas) => atlas.uv().into_tuple(),
-                            TexTy::Simple(tex) => (0, 0),
+                            TexTy::Atlas(atlas) => UvKind::Absolute(atlas.uv().into_tuple()),
+                            TexTy::Simple(_) => UvKind::Relative(COLOR_UV_OFFSETS[idx]),
                         },
                         color_scale_factor: 1.0,
                     });

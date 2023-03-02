@@ -79,7 +79,7 @@ impl Renderer {
                         atlas.update(&mut encoder);
                     }*/
                     atlas.update(&mut encoder);
-                    let mut atlas_models: HashMap<AtlasId, Vec<TextureVertex>> = HashMap::new();
+                    let mut atlas_models: HashMap<AtlasId, Vec<AbsoluteTextureVertex>> = HashMap::new();
                     let mut color_models = vec![];
                     let mut texture_models = vec![];
                     for model in models {
@@ -88,30 +88,36 @@ impl Renderer {
                                 color_models.extend(model.vertices.into_iter().map(
                                     |vert| match vert {
                                         Vertex::Color { pos, color } => ColorVertex { pos, color },
-                                        Vertex::Texture { .. } => abort(), // FIXME: is it really necessary to abort because of perf stuff?
+                                        Vertex::Texture { .. } => unreachable!(),
                                     },
                                 ));
                             }
                             ColorSource::Atlas(atlas) => {
                                 // FIXME: make different atlases work!
                                 let vertices = model.vertices.into_iter().map(|vert| match vert {
-                                    Vertex::Color { .. } => abort(),
+                                    Vertex::Color { .. } => unreachable!(),
                                     Vertex::Texture { pos, alpha, uv, color_scale_factor } => {
-                                        TextureVertex { pos, alpha, uv, color_scale_factor }
+                                        AbsoluteTextureVertex { pos, alpha, uv: match uv {
+                                            UvKind::Absolute(abs) => abs,
+                                            UvKind::Relative(_) => unreachable!(),
+                                        }, color_scale_factor }
                                     }
                                 });
                                 if let Some(mut models) = atlas_models.get_mut(&atlas.id()) {
                                     models.extend(vertices);
                                 } else {
                                     atlas_models
-                                        .insert(atlas.id(), vertices.collect::<Vec<TextureVertex>>());
+                                        .insert(atlas.id(), vertices.collect::<Vec<AbsoluteTextureVertex>>());
                                 }
                             }
                             ColorSource::Tex(tex) => {
                                 let vertices = model.vertices.into_iter().map(|vert| match vert {
                                     Vertex::Color { .. } => abort(),
                                     Vertex::Texture { pos, alpha, uv, color_scale_factor } => {
-                                        TextureVertex { pos, alpha, uv, color_scale_factor }
+                                        RelativeTextureVertex { pos, alpha, uv: match uv {
+                                            UvKind::Absolute(_) => unreachable!(),
+                                            UvKind::Relative(rel) => rel,
+                                        }, color_scale_factor }
                                     }
                                 });
                                 texture_models.push((tex, vertices.collect::<Vec<_>>()));
@@ -226,7 +232,7 @@ impl Renderer {
         PipelineBuilder::new()
             .vertex(VertexShaderState {
                 entry_point: "main_vert",
-                buffers: &[TextureVertex::desc()],
+                buffers: &[AbsoluteTextureVertex::desc()],
             })
             .fragment(FragmentShaderState {
                 entry_point: "main_frag",
@@ -269,7 +275,7 @@ impl Renderer {
         PipelineBuilder::new()
             .vertex(VertexShaderState {
                 entry_point: "main_vert",
-                buffers: &[TextureVertex::desc()],
+                buffers: &[RelativeTextureVertex::desc()],
             })
             .fragment(FragmentShaderState {
                 entry_point: "main_frag",
@@ -347,9 +353,15 @@ pub enum Vertex {
     Texture {
         pos: [f32; 2],
         alpha: f32,
-        uv: (u32, u32),
+        uv: UvKind,
         color_scale_factor: f32,
     },
+}
+
+#[derive(Copy, Clone)]
+pub enum UvKind {
+    Absolute((u32, u32)),
+    Relative((f32, f32)),
 }
 
 #[derive(Pod, Zeroable, Copy, Clone)]
@@ -382,19 +394,61 @@ impl ColorVertex {
 
 #[derive(Zeroable, Copy, Clone)]
 #[repr(C)]
-struct TextureVertex {
+struct AbsoluteTextureVertex {
     pos: [f32; 2],
     alpha: f32,
     uv: (u32, u32),
     color_scale_factor: f32,
 }
 
-unsafe impl bytemuck::Pod for TextureVertex {}
+unsafe impl bytemuck::Pod for AbsoluteTextureVertex {}
 
-impl TextureVertex {
+impl AbsoluteTextureVertex {
     fn desc<'a>() -> VertexBufferLayout<'a> {
         VertexBufferLayout {
-            array_stride: size_of::<TextureVertex>() as BufferAddress,
+            array_stride: size_of::<AbsoluteTextureVertex>() as BufferAddress,
+            step_mode: VertexStepMode::Vertex,
+            attributes: &[
+                VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: VertexFormat::Float32x2,
+                },
+                VertexAttribute {
+                    offset: size_of::<[f32; 2]>() as BufferAddress,
+                    shader_location: 1,
+                    format: VertexFormat::Float32x2,
+                },
+                VertexAttribute {
+                    offset: size_of::<[f32; 4]>() as BufferAddress,
+                    shader_location: 2,
+                    format: VertexFormat::Float32,
+                },
+                VertexAttribute {
+                    offset: size_of::<[f32; 5]>() as BufferAddress,
+                    shader_location: 3,
+                    format: VertexFormat::Float32,
+                },
+            ],
+        }
+    }
+}
+
+#[derive(Zeroable, Copy, Clone)]
+#[repr(C)]
+struct RelativeTextureVertex {
+    pos: [f32; 2],
+    alpha: f32,
+    uv: (f32, f32),
+    color_scale_factor: f32,
+}
+
+unsafe impl bytemuck::Pod for RelativeTextureVertex {}
+
+impl RelativeTextureVertex {
+    fn desc<'a>() -> VertexBufferLayout<'a> {
+        VertexBufferLayout {
+            array_stride: size_of::<RelativeTextureVertex>() as BufferAddress,
             step_mode: VertexStepMode::Vertex,
             attributes: &[
                 VertexAttribute {
