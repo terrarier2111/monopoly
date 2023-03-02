@@ -108,13 +108,13 @@ pub fn is_inbounds(dims: (f32, f32), pos: (f32, f32), test: (f32, f32)) -> bool 
 }
 
 const COLOR_UV_OFFSETS: [(f32, f32); 6] = [
-            (0.0, 0.0),
-            (1.0, 0.0),
-            (1.0, 1.0),
-            (0.0, 0.0),
-            (0.0, 1.0),
-            (1.0, 1.0),
-        ];
+    (0.0, 1.0), // bottom left
+    (1.0, 1.0), // bottom right
+    (1.0, 0.0), // top right
+    (0.0, 1.0), // bottom left
+    (0.0, 0.0), // top left
+    (1.0, 0.0), // top right
+];
 
 pub struct InnerUIComponent {
     inner: Arc<RwLock<Box<dyn Component>>>, // FIXME: should we prefer a Mutex over a Rwlock?
@@ -355,18 +355,18 @@ impl Component for ColorBox {
     fn build_model(&self) -> Model {
         let (x_off, y_off) = ((2.0 * self.pos.0), (2.0 * self.pos.1));
         let vertices = [
-            [-1.0 + x_off, -1.0 + y_off],
-            [2.0 * self.width - 1.0 + x_off, -1.0 + y_off],
+            [-1.0 + x_off, -1.0 + y_off], // bottom left
+            [2.0 * self.width - 1.0 + x_off, -1.0 + y_off], // bottom right
             [
                 2.0 * self.width - 1.0 + x_off,
                 2.0 * self.height - 1.0 + y_off,
-            ],
-            [-1.0 + x_off, -1.0 + y_off],
-            [-1.0 + x_off, 2.0 * self.height - 1.0 + y_off],
+            ], // top right
+            [-1.0 + x_off, -1.0 + y_off], // bottom left
+            [-1.0 + x_off, 2.0 * self.height - 1.0 + y_off], // top left
             [
                 2.0 * self.width - 1.0 + x_off,
                 2.0 * self.height - 1.0 + y_off,
-            ],
+            ], // top right
         ];
         let vertices = match &self.coloring {
             Coloring::Color(colors) => {
@@ -387,7 +387,7 @@ impl Component for ColorBox {
                         alpha: 1.0, // FIXME: make this actually parameterized!
                         uv: match &tex.ty {
                             TexTy::Atlas(atlas) => UvKind::Absolute(atlas.uv().into_tuple()),
-                            TexTy::Simple(_) => UvKind::Relative(COLOR_UV_OFFSETS[idx]),
+                            TexTy::Simple(tex) => COLOR_UV_OFFSETS[idx],
                         },
                         color_scale_factor: 1.0,
                     });

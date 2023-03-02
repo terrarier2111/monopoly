@@ -396,8 +396,8 @@ impl ColorVertex {
 #[repr(C)]
 struct AbsoluteTextureVertex {
     pos: [f32; 2],
-    alpha: f32,
     uv: (u32, u32),
+    alpha: f32,
     color_scale_factor: f32,
 }
 
@@ -438,8 +438,8 @@ impl AbsoluteTextureVertex {
 #[repr(C)]
 struct RelativeTextureVertex {
     pos: [f32; 2],
-    alpha: f32,
     uv: (f32, f32),
+    alpha: f32,
     color_scale_factor: f32,
 }
 

@@ -1,6 +1,6 @@
 struct VertIn {
     @location(0) position: vec2<f32>,
-    @location(1) uv_coords: vec2<f32>, // FIXME: do we even need this?
+    @location(1) uv_coords: vec2<f32>,
     @location(2) alpha_scale_factor: f32,
     @location(3) color_scale_factor: f32,
 };
