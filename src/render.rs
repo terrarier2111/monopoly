@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use dashmap::DashMap;
-use wgpu::{BindGroupEntry, BindGroupLayoutEntry, BindingResource, BindingType, BlendState, BufferAddress, BufferUsages, Color, ColorTargetState, ColorWrites, LoadOp, Operations, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPipeline, Sampler, SamplerBindingType, ShaderSource, ShaderStages, Texture, TextureFormat, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
+use wgpu::{BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType, BlendState, BufferAddress, BufferUsages, Color, ColorTargetState, ColorWrites, LoadOp, Operations, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPipeline, Sampler, SamplerBindingType, ShaderSource, ShaderStages, Texture, TextureFormat, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 use wgpu::util::StagingBelt;
 use wgpu_biolerless::{
     FragmentShaderState, ModuleSrc, PipelineBuilder, ShaderModuleSources, State, VertexShaderState,
@@ -24,6 +24,7 @@ pub struct Renderer {
     atlas_pipeline: RenderPipeline,
     tex_pipeline: RenderPipeline,
     color_pipeline: RenderPipeline,
+    tex_bind_group_layout: BindGroupLayout,
     pub dimensions: Dimensions,
     glyphs: Mutex<Vec<GlyphInfo>>,
 }
@@ -56,6 +57,23 @@ impl Renderer {
             format: state.format(),
             staging_belt: Mutex::new(StagingBelt::new(1024)),
         });
+
+        let bgl = state.create_bind_group_layout(&[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::FRAGMENT,
+            ty: BindingType::Texture {
+                multisampled: false,
+                view_dimension: TextureViewDimension::D2,
+                sample_type: TextureSampleType::Float { filterable: true },
+            },
+            count: None,
+        }, BindGroupLayoutEntry {
+            binding: 1,
+            visibility: ShaderStages::FRAGMENT,
+            ty: BindingType::Sampler(SamplerBindingType::Filtering),
+            count: None,
+        }]);
+
         let (width, height) = window.window_size();
         Ok(Self {
             atlas_pipeline: Self::atlas_pipeline(&state),
@@ -64,6 +82,7 @@ impl Renderer {
             state,
             dimensions: Dimensions::new(width, height),
             glyphs: Mutex::new(glyphs),
+            tex_bind_group_layout: bgl,
         })
     }
 
@@ -119,8 +138,9 @@ impl Renderer {
                                 }
                             }
                             ColorSource::Tex(tex) => {
+                                // println!("tex_debug: {:?}", tex.tex.size());
                                 let vertices = model.vertices.into_iter().map(|vert| match vert {
-                                    Vertex::Color { .. } => abort(),
+                                    Vertex::Color { .. } => unreachable!(),
                                     Vertex::Texture { pos, alpha, uv, color_scale_factor, grayscale_conv } => {
                                         RelativeTextureVertex { pos, alpha, uv: match uv {
                                             UvKind::Absolute(_) => unreachable!(),
@@ -161,25 +181,12 @@ impl Renderer {
                         render_pass.draw(0..(color_models.len() as u32), 0..1);
                     }
 
-                    for texture_models in texture_models.iter() {
+                    // println!("tex models: {}", texture_models.len());
+                    for (idx, texture_models) in texture_models.iter().enumerate() {
                         let texture_buffer =
                             state.create_buffer(texture_models.1.as_slice(), BufferUsages::VERTEX);
-                        let bgl = state.create_bind_group_layout(&[BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: ShaderStages::FRAGMENT,
-                            ty: BindingType::Texture {
-                                multisampled: false,
-                                view_dimension: TextureViewDimension::D2,
-                                sample_type: TextureSampleType::Float { filterable: true },
-                            },
-                            count: None,
-                        }, BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: ShaderStages::FRAGMENT,
-                            ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                            count: None,
-                        }]);
-                        let bg = state.create_bind_group(&bgl, &[BindGroupEntry {
+
+                        let bg = state.create_bind_group(&self.tex_bind_group_layout, &[BindGroupEntry {
                             binding: 0,
                             resource: BindingResource::TextureView(&texture_models.0.view),
                         }, BindGroupEntry {
@@ -191,7 +198,7 @@ impl Renderer {
                                 view: &view,
                                 resolve_target: None,
                                 ops: Operations {
-                                    load: LoadOp::Clear(LIGHT_GRAY_GPU),
+                                    load: LoadOp::Load,
                                     store: true,
                                 },
                             })];
@@ -199,6 +206,7 @@ impl Renderer {
                                 state.create_render_pass(&mut encoder, &attachments, None);
                             // let buffer = state.create_buffer(atlas_models.as_slice(), BufferUsages::VERTEX);
                             // render_pass.set_vertex_buffer(0, buffer.slice(..));
+                            println!("idx: {} models: {}", idx, texture_models.1.len());
 
                             render_pass.set_vertex_buffer(0, texture_buffer.slice(..));
                             render_pass.set_bind_group(0, &bg, &[]);

@@ -33,8 +33,8 @@ impl Screen for Login {
     fn on_active(&mut self, game: &Arc<Game>) {
         let entry_offset = 1.0 / (self.chars.lock().unwrap().len() + 3) as f32;
         for char in self.chars.lock().unwrap().iter().enumerate() {
+            println!("chars: {}", char.1.model_path);
             let mut buf = image::open(&char.1.model_path).unwrap();
-            // let mut buf = image::load_from_memory(include_bytes!("../../config/joda.jpg")).unwrap();
             let buf = Arc::new(buf.into_rgba8());
             let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
                 .format(TextureFormat::Rgba8UnormSrgb/*TextureFormat::Rgba8Uint*/).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));
