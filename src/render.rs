@@ -8,25 +8,33 @@ use std::process::abort;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
+use cgmath::{Deg, InnerSpace, Matrix4, perspective, Point3, Quaternion, SquareMatrix, Vector3};
 use dashmap::DashMap;
-use wgpu::{BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType, BlendState, BufferAddress, BufferUsages, Color, ColorTargetState, ColorWrites, LoadOp, Operations, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPipeline, Sampler, SamplerBindingType, ShaderSource, ShaderStages, Texture, TextureFormat, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
+use wgpu::{BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferAddress, BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites, IndexFormat, LoadOp, Operations, PushConstantRange, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPipeline, Sampler, SamplerBindingType, ShaderSource, ShaderStages, Texture, TextureFormat, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 use wgpu::util::StagingBelt;
 use wgpu_biolerless::{
     FragmentShaderState, ModuleSrc, PipelineBuilder, ShaderModuleSources, State, VertexShaderState,
     WindowSize,
 };
 use wgpu_glyph::{ab_glyph, GlyphBrush, GlyphBrushBuilder, Section};
+use winit::event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::window::Window;
+use crate::model::{ModelColorVertex, ModelTexVertex, Vertex as MVV};
 use crate::utils::LIGHT_GRAY_GPU;
 
 pub struct Renderer {
     pub state: Arc<State>,
     atlas_pipeline: RenderPipeline,
-    tex_pipeline: RenderPipeline,
-    color_pipeline: RenderPipeline,
+    tex_ui_pipeline: RenderPipeline,
+    color_ui_pipeline: RenderPipeline,
+    color_model_pipeline: RenderPipeline,
+    tex_model_pipeline: RenderPipeline,
     tex_bind_group_layout: BindGroupLayout,
+    camera_bind_group_layout: BindGroupLayout,
+    model_bind_group_layout: BindGroupLayout,
     pub dimensions: Dimensions,
     glyphs: Mutex<Vec<GlyphInfo>>,
+    models: Mutex<Vec<UploadedModel>>,
 }
 
 pub struct GlyphInfo {
@@ -74,22 +82,84 @@ impl Renderer {
             count: None,
         }]);
 
+        let camera_bind_group_layout = state.create_bind_group_layout(&[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::VERTEX,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }]);
+
+        let model_bind_group_layout = state.create_bind_group_layout(&[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: TextureViewDimension::D2,
+                    sample_type: TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                // This should match the filterable field of the
+                // corresponding Texture entry above.
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ]);
+
         let (width, height) = window.window_size();
         Ok(Self {
-            atlas_pipeline: Self::atlas_pipeline(&state),
-            tex_pipeline: Self::tex_pipeline(&state),
-            color_pipeline: Self::color_pipeline(&state),
+            atlas_pipeline: Self::atlas_ui_pipeline(&state),
+            tex_ui_pipeline: Self::tex_ui_pipeline(&state),
+            color_ui_pipeline: Self::color_ui_pipeline(&state),
+            color_model_pipeline: Self::tex_model_pipeline(&state, &model_bind_group_layout, &camera_bind_group_layout),
+            tex_model_pipeline: Self::color_model_pipeline(&state, &camera_bind_group_layout),
             state,
             dimensions: Dimensions::new(width, height),
             glyphs: Mutex::new(glyphs),
             tex_bind_group_layout: bgl,
+            models: Mutex::new(vec![]),
+            camera_bind_group_layout,
+            model_bind_group_layout,
         })
+    }
+
+    pub fn add_model(&self, state: &State, model: crate::model::Model, coloring: ModelColoring) -> usize {
+        let mut models = self.models.lock().unwrap();
+        let bind_group = match &coloring {
+            ModelColoring::Direct(_) => None,
+            ModelColoring::Tex(tex) => {
+                let bg = state.create_bind_group(&self.model_bind_group_layout, &[BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&tex.view),
+                }, BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&tex.sampler),
+                }]);
+                Some(bg)
+            }
+        };
+        models.push(UploadedModel {
+            model,
+            coloring,
+            bind_group,
+        });
+        models.len() - 1
     }
 
     pub fn render(
         &self,
-        models: Vec<Model>,
+        ui_models: Vec<Model>,
+        instances: Vec<ModeledInstance>,
         atlas: Arc<Atlas>, /*atlases: Arc<Mutex<Vec<Arc<Atlas>>>>*/
+        camera: &Camera,
     ) {
         self.state
             .render(
@@ -101,7 +171,7 @@ impl Renderer {
                     let mut atlas_models: HashMap<AtlasId, Vec<AbsoluteTextureVertex>> = HashMap::new();
                     let mut color_models = vec![];
                     let mut texture_models = vec![];
-                    for model in models {
+                    for model in ui_models {
                         match model.color_src.clone() { // FIXME: try getting rid of this clone!
                             ColorSource::PerVert => {
                                 color_models.extend(model.vertices.into_iter().map(
@@ -162,7 +232,27 @@ impl Renderer {
                     }
                     let color_buffer =
                         state.create_buffer(color_models.as_slice(), BufferUsages::VERTEX);
+
+                    // setup a buffer before creating the render pass in order to help the
+                    // compiler understand that the textures are living long enough.
+                    let mut tex_buffer = vec![];
+
+                    for texture_models in texture_models.iter() {
+                        let texture_buffer =
+                            state.create_buffer(texture_models.1.as_slice(), BufferUsages::VERTEX);
+
+                        let bg = state.create_bind_group(&self.tex_bind_group_layout, &[BindGroupEntry {
+                            binding: 0,
+                            resource: BindingResource::TextureView(&texture_models.0.view),
+                        }, BindGroupEntry {
+                            binding: 1,
+                            resource: BindingResource::Sampler(&texture_models.0.sampler),
+                        }]);
+                        tex_buffer.push((texture_buffer, bg));
+                    }
                     {
+                        let mut texture_models = texture_models.iter();
+                        let mut tex_buffer = tex_buffer.iter();
                         let attachments = [Some(RenderPassColorAttachment {
                             view: &view,
                             resolve_target: None,
@@ -177,43 +267,82 @@ impl Renderer {
                         // render_pass.set_vertex_buffer(0, buffer.slice(..));
 
                         render_pass.set_vertex_buffer(0, color_buffer.slice(..));
-                        render_pass.set_pipeline(&self.color_pipeline);
+                        render_pass.set_pipeline(&self.color_ui_pipeline);
                         render_pass.draw(0..(color_models.len() as u32), 0..1);
-                    }
 
-                    // println!("tex models: {}", texture_models.len());
-                    for (idx, texture_models) in texture_models.iter().enumerate() {
-                        let texture_buffer =
-                            state.create_buffer(texture_models.1.as_slice(), BufferUsages::VERTEX);
-
-                        let bg = state.create_bind_group(&self.tex_bind_group_layout, &[BindGroupEntry {
-                            binding: 0,
-                            resource: BindingResource::TextureView(&texture_models.0.view),
-                        }, BindGroupEntry {
-                            binding: 1,
-                            resource: BindingResource::Sampler(&texture_models.0.sampler),
-                        }]);
-                        {
-                            let attachments = [Some(RenderPassColorAttachment {
-                                view: &view,
-                                resolve_target: None,
-                                ops: Operations {
-                                    load: LoadOp::Load,
-                                    store: true,
-                                },
-                            })];
-                            let mut render_pass =
-                                state.create_render_pass(&mut encoder, &attachments, None);
-                            // let buffer = state.create_buffer(atlas_models.as_slice(), BufferUsages::VERTEX);
-                            // render_pass.set_vertex_buffer(0, buffer.slice(..));
-                            println!("idx: {} models: {}", idx, texture_models.1.len());
-
-                            render_pass.set_vertex_buffer(0, texture_buffer.slice(..));
-                            render_pass.set_bind_group(0, &bg, &[]);
-                            render_pass.set_pipeline(&self.tex_pipeline);
-                            render_pass.draw(0..(texture_models.1.len() as u32), 0..1);
+                        // println!("tex models: {}", texture_models.len());
+                        render_pass.set_pipeline(&self.tex_ui_pipeline);
+                        for buf in tex_buffer {
+                            let model = texture_models.next().unwrap();
+                            render_pass.set_vertex_buffer(0, buf.0.slice(..));
+                            render_pass.set_bind_group(0, &buf.1, &[]);
+                            render_pass.draw(0..(model.1.len() as u32), 0..1);
                         }
                     }
+
+                    let mut camera_uniform = CameraUniform::new();
+                    camera_uniform.update_view_proj(camera);
+
+                    let camera_buffer = state.create_buffer(
+                        &[camera_uniform],
+                        BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                    );
+                    let camera_bind_group = state.create_bind_group(
+                        &self.camera_bind_group_layout,
+                        &[BindGroupEntry {
+                            binding: 0,
+                            resource: camera_buffer.as_entire_binding(),
+                        }],
+                    );
+
+                    let models = self.models.lock().unwrap();
+                    let mut instance_buffer = vec![vec![]; models.len()];
+                    for instance in instances.iter() {
+                        instance_buffer[instance.model_id].push(instance.instance.to_raw());
+                    }
+
+                    let mut instance_gpu_buffs = vec![];
+                    for instance in instance_buffer.iter() {
+                        let buf = self.state.create_buffer(instance, BufferUsages::VERTEX);
+                        instance_gpu_buffs.push(buf);
+                    }
+
+                    {
+                        let attachments = [Some(RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Clear(LIGHT_GRAY_GPU),
+                                store: true,
+                            },
+                        })];
+                        let mut render_pass =
+                            state.create_render_pass(&mut encoder, &attachments, None);
+
+                        // println!("tex models: {}", texture_models.len());
+                        for (idx, instance) in instances.into_iter().enumerate() {
+                            let model = models.get(instance.model_id).unwrap();
+                            match &model.coloring {
+                                ModelColoring::Direct(color) => {
+                                    render_pass.set_pipeline(&self.tex_model_pipeline);
+                                    render_pass.set_push_constants(ShaderStages::FRAGMENT, 0, bytemuck::cast_slice(color));
+                                }
+                                ModelColoring::Tex(_) => {
+                                    render_pass.set_pipeline(&self.color_model_pipeline);
+                                    render_pass.set_bind_group(1, model.bind_group.as_ref().unwrap(), &[]); // texture bind group
+                                }
+                            }
+                            for mesh in model.model.meshes.iter() {
+                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                render_pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint32);
+                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                render_pass.set_vertex_buffer(1, instance_gpu_buffs.get(idx).unwrap().slice(..));
+                                render_pass.set_bind_group(0, &camera_bind_group, &[]); // camera bind group
+                                render_pass.draw_indexed(0..mesh.num_elements, 0, 0..(instance_buffer.get(idx).unwrap().len() as u32)); // FIXME: is this correct for the instances?
+                            }
+                        }
+                    }
+
                     for glyph in self.glyphs.lock().unwrap().iter() {
                         let mut staging_belt = glyph.staging_belt.lock().unwrap();
                         let (width, height) = self.dimensions.get();
@@ -230,7 +359,7 @@ impl Renderer {
         }
     }
 
-    fn color_pipeline(state: &State) -> RenderPipeline {
+    fn color_ui_pipeline(state: &State) -> RenderPipeline {
         PipelineBuilder::new()
             .vertex(VertexShaderState {
                 entry_point: "main_vert",
@@ -251,7 +380,7 @@ impl Renderer {
             .build(state)
     }
 
-    fn atlas_pipeline(state: &State) -> RenderPipeline {
+    fn atlas_ui_pipeline(state: &State) -> RenderPipeline {
         PipelineBuilder::new()
             .vertex(VertexShaderState {
                 entry_point: "main_vert",
@@ -294,7 +423,7 @@ impl Renderer {
             .build(state)
     }
 
-    fn tex_pipeline(state: &State) -> RenderPipeline {
+    fn tex_ui_pipeline(state: &State) -> RenderPipeline {
         PipelineBuilder::new()
             .vertex(VertexShaderState {
                 entry_point: "main_vert",
@@ -337,6 +466,51 @@ impl Renderer {
             .build(state)
     }
 
+    fn tex_model_pipeline(state: &State, bgl: &BindGroupLayout, camera_layout: &BindGroupLayout) -> RenderPipeline {
+        PipelineBuilder::new()
+            .vertex(VertexShaderState {
+                entry_point: "main_vert",
+                buffers: &[ModelTexVertex::desc(), InstanceRaw::desc()],
+            })
+            .fragment(FragmentShaderState {
+                entry_point: "main_frag",
+                targets: &[Some(ColorTargetState {
+                    format: state.format(),
+                    blend: Some(BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                })],
+            })
+            .shader_src(ShaderModuleSources::Single(ModuleSrc::Source(
+                ShaderSource::Wgsl(include_str!("model_texture.wgsl").into()),
+            )))
+            .layout(&state.create_pipeline_layout(&[&camera_layout, &bgl], &[]))
+            .build(state)
+    }
+
+    fn color_model_pipeline(state: &State, camera_layout: &BindGroupLayout) -> RenderPipeline {
+        PipelineBuilder::new()
+            .vertex(VertexShaderState {
+                entry_point: "main_vert",
+                buffers: &[ModelColorVertex::desc(), InstanceRaw::desc()],
+            })
+            .fragment(FragmentShaderState {
+                entry_point: "main_frag",
+                targets: &[Some(ColorTargetState {
+                    format: state.format(),
+                    blend: Some(BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                })],
+            })
+            .shader_src(ShaderModuleSources::Single(ModuleSrc::Source(
+                ShaderSource::Wgsl(include_str!("model_color.wgsl").into()),
+            )))
+            .layout(&state.create_pipeline_layout(&[&camera_layout], &[PushConstantRange {
+                stages: ShaderStages::FRAGMENT,
+                range: 0..16,
+            }]))
+            .build(state)
+    }
+
     pub fn add_glyph(&self, glyph_info: GlyphInfo) -> usize {
         let mut glyphs = self.glyphs.lock().unwrap();
         let len = glyphs.len();
@@ -347,6 +521,12 @@ impl Renderer {
     pub fn queue_glyph(&self, glyph_id: usize, section: Section) {
         self.glyphs.lock().unwrap()[glyph_id].brush.lock().unwrap().queue(section);
     }
+}
+
+struct UploadedModel {
+    model: crate::model::Model,
+    coloring: ModelColoring,
+    bind_group: Option<BindGroup>,
 }
 
 #[derive(Clone)]
@@ -544,4 +724,225 @@ pub struct TexTriple {
     pub tex: Texture,
     pub view: TextureView,
     pub sampler: Sampler,
+}
+
+pub struct Camera {
+    eye: Point3<f32>,
+    target: Point3<f32>,
+    up: Vector3<f32>,
+    aspect: f32,
+    fovy: f32,
+    znear: f32,
+    zfar: f32,
+}
+
+impl Camera {
+
+    pub fn new(state: &State) -> Self {
+        Self {
+            // position the camera one unit up and 2 units back
+            // +z is out of the screen
+            eye: (0.0, 1.0, 2.0).into(),
+            // have it look at the origin
+            target: (0.0, 0.0, 0.0).into(),
+            // which way is "up"
+            up: Vector3::unit_y(),
+            aspect: state.size().0 as f32 / state.size().1 as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        }
+    }
+
+    fn build_view_projection_matrix(&self) -> Matrix4<f32> {
+        let view = Matrix4::look_at_rh(self.eye, self.target, self.up);
+        let proj = perspective(Deg(self.fovy), self.aspect, self.znear, self.zfar);
+
+        return OPENGL_TO_WGPU_MATRIX * proj * view;
+    }
+}
+
+#[rustfmt::skip]
+pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 0.5, 0.0,
+    0.0, 0.0, 0.5, 1.0,
+);
+
+// We need this for Rust to store our data correctly for the shaders
+#[repr(C)]
+// This is so we can store this in a buffer
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+    // We can't use cgmath with bytemuck directly so we'll have
+    // to convert the Matrix4 into a 4x4 f32 array
+    view_proj: [[f32; 4]; 4],
+}
+
+impl CameraUniform {
+    fn new() -> Self {
+        Self {
+            view_proj: Matrix4::identity().into(),
+        }
+    }
+
+    fn update_view_proj(&mut self, camera: &Camera) {
+        self.view_proj = camera.build_view_projection_matrix().into();
+    }
+}
+
+pub struct CameraController {
+    speed: f32,
+    is_forward_pressed: bool,
+    is_backward_pressed: bool,
+    is_left_pressed: bool,
+    is_right_pressed: bool,
+}
+
+impl CameraController {
+    pub fn new(speed: f32) -> Self {
+        Self {
+            speed,
+            is_forward_pressed: false,
+            is_backward_pressed: false,
+            is_left_pressed: false,
+            is_right_pressed: false,
+        }
+    }
+
+    pub fn process_events(&mut self, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::KeyboardInput {
+                input:
+                KeyboardInput {
+                    state,
+                    virtual_keycode: Some(keycode),
+                    ..
+                },
+                ..
+            } => {
+                let is_pressed = *state == ElementState::Pressed;
+                match keycode {
+                    VirtualKeyCode::W | VirtualKeyCode::Up => {
+                        self.is_forward_pressed = is_pressed;
+                        true
+                    }
+                    VirtualKeyCode::A | VirtualKeyCode::Left => {
+                        self.is_left_pressed = is_pressed;
+                        true
+                    }
+                    VirtualKeyCode::S | VirtualKeyCode::Down => {
+                        self.is_backward_pressed = is_pressed;
+                        true
+                    }
+                    VirtualKeyCode::D | VirtualKeyCode::Right => {
+                        self.is_right_pressed = is_pressed;
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    pub fn update_camera(&self, camera: &mut Camera) {
+        let forward = camera.target - camera.eye;
+        let forward_norm = forward.normalize();
+        let forward_mag = forward.magnitude();
+
+        // Prevents glitching when camera gets too close to the
+        // center of the scene.
+        if self.is_forward_pressed && forward_mag > self.speed {
+            camera.eye += forward_norm * self.speed;
+        }
+        if self.is_backward_pressed {
+            camera.eye -= forward_norm * self.speed;
+        }
+
+        let right = forward_norm.cross(camera.up);
+
+        // Redo radius calc in case the forward/backward is pressed.
+        let forward = camera.target - camera.eye;
+        let forward_mag = forward.magnitude();
+
+        if self.is_right_pressed {
+            // Rescale the distance between the target and eye so
+            // that it doesn't change. The eye therefore still
+            // lies on the circle made by the target and eye.
+            camera.eye = camera.target - (forward + right * self.speed).normalize() * forward_mag;
+        }
+        if self.is_left_pressed {
+            camera.eye = camera.target - (forward - right * self.speed).normalize() * forward_mag;
+        }
+    }
+}
+
+pub struct ModeledInstance {
+    pub model_id: usize,
+    pub instance: Instance,
+}
+
+pub enum ModelColoring {
+    Direct([f32; 4]),
+    Tex(Arc<TexTriple>),
+}
+
+pub struct Instance {
+    pub position: Vector3<f32>,
+    pub rotation: Quaternion<f32>,
+}
+
+impl Instance {
+    fn to_raw(&self) -> InstanceRaw {
+        InstanceRaw {
+            model: (Matrix4::from_translation(self.position) * Matrix4::from(self.rotation)).into(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct InstanceRaw {
+    model: [[f32; 4]; 4],
+}
+
+impl InstanceRaw {
+    fn desc<'a>() -> VertexBufferLayout<'a> {
+        VertexBufferLayout {
+            array_stride: size_of::<InstanceRaw>() as BufferAddress,
+            // We need to switch from using a step mode of Vertex to Instance
+            // This means that our shaders will only change to use the next
+            // instance when the shader starts processing a new instance
+            step_mode: VertexStepMode::Instance,
+            attributes: &[
+                VertexAttribute {
+                    offset: 0,
+                    // While our vertex shader only uses locations 0, and 1 now, in later tutorials we'll
+                    // be using 2, 3, and 4, for Vertex. We'll start at slot 5 not conflict with them later
+                    shader_location: 5,
+                    format: VertexFormat::Float32x4,
+                },
+                // A mat4 takes up 4 vertex slots as it is technically 4 vec4s. We need to define a slot
+                // for each vec4. We'll have to reassemble the mat4 in
+                // the shader.
+                VertexAttribute {
+                    offset: size_of::<[f32; 4]>() as BufferAddress,
+                    shader_location: 6,
+                    format: VertexFormat::Float32x4,
+                },
+                VertexAttribute {
+                    offset: size_of::<[f32; 8]>() as BufferAddress,
+                    shader_location: 7,
+                    format: VertexFormat::Float32x4,
+                },
+                VertexAttribute {
+                    offset: size_of::<[f32; 12]>() as BufferAddress,
+                    shader_location: 8,
+                    format: VertexFormat::Float32x4,
+                },
+            ],
+        }
+    }
 }

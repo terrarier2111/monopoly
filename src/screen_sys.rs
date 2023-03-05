@@ -204,15 +204,12 @@ impl ScreenSystem {
 
     pub fn on_mouse_click(&self, game: &Arc<Game>, pos: (f64, f64), click_kind: ClickKind) {
         if let Some(screen) = self.screens.clone().read().unwrap().last() {
-            println!("clicked0!");
             screen
                 .screen
                 .clone()
                 .lock()
                 .unwrap()
                 .container().on_mouse_click(game, pos, click_kind);
-        } else {
-            println!("screens: {}", self.screens.clone().read().unwrap().len());
         }
     }
 

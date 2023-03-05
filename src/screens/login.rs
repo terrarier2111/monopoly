@@ -4,14 +4,15 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use crate::render::{Renderer, TexTriple, TexTy};
 use crate::screen_sys::Screen;
 use crate::ui::{Button, Color, ColorBox, Coloring, Container, Tex, TextBox, TextSection};
-use crate::{Game, ScreenSystem, ui};
+use crate::{Game, GameState, ScreenSystem, ui};
 use std::sync::{Arc, Mutex, RwLock};
-use image::{EncodableLayout, GenericImageView};
+use image::{EncodableLayout, GenericImageView, RgbaImage};
 use rand::Rng;
 use wgpu::{Sampler, SamplerDescriptor, TextureAspect, TextureDimension, TextureFormat, TextureViewDescriptor};
 use wgpu_biolerless::TextureBuilder;
 use wgpu_glyph::{HorizontalAlign, Layout, Text, VerticalAlign};
 use crate::player::Character;
+use crate::screens::in_game::InGame;
 use crate::utils::DARK_GRAY_UI;
 
 #[derive(Clone)]
@@ -33,11 +34,10 @@ impl Screen for Login {
     fn on_active(&mut self, game: &Arc<Game>) {
         let entry_offset = 1.0 / (self.chars.lock().unwrap().len() + 3) as f32;
         for char in self.chars.lock().unwrap().iter().enumerate() {
-            println!("chars: {}", char.1.model_path);
             let mut buf = image::open(&char.1.model_path).unwrap();
             let buf = Arc::new(buf.into_rgba8());
             let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
-                .format(TextureFormat::Rgba8UnormSrgb/*TextureFormat::Rgba8Uint*/).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));
+                .format(TextureFormat::Rgba8UnormSrgb).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));
             let view = tex.create_view(&TextureViewDescriptor::default());
             self.container.add(Arc::new(RwLock::new(Box::new(Button::new(
                 TextBox::new(
@@ -57,135 +57,66 @@ impl Screen for Login {
                                 mipmap_filter: wgpu::FilterMode::Nearest,
                                 ..Default::default()
                             }),
-                        }))/*TexTy::Atlas(game.atlas.alloc(char.1.model_path.clone(), buf.dimensions(), buf.as_bytes()))*//*TexTy::Simple()*/,
+                        })),
                         grayscale_conv: false,
-                    })/*Coloring::Color([
-                        DARK_GRAY_UI,
-                        DARK_GRAY_UI,
-                        DARK_GRAY_UI,
-                        DARK_GRAY_UI,
-                        DARK_GRAY_UI,
-                        DARK_GRAY_UI,
-                    ])*/,
+                    }),
                     TextSection {
-                        layout: Layout::default_single_line().v_align(VerticalAlign::Bottom/*Bottom*//*VerticalAlign::Center*/).h_align(HorizontalAlign::Left),
+                        layout: Layout::default_single_line().v_align(VerticalAlign::Bottom).h_align(HorizontalAlign::Left),
                         text: vec![Text::default().with_scale(30.0)],
                         texts: vec![char.1.name.clone()],
                     }
                 ),
-                Arc::new(Box::new(|button, game| {
-                    println!("test!!");
-                    match &mut button.inner_box.coloring {
-                        Coloring::Color(_) => {}
-                        Coloring::Tex(tex) => {
-                            tex.grayscale_conv = true;
+                Arc::new(Box::new(|button: &mut Button<'_, (Arc<RgbaImage>, usize)>, game| {
+                    if let Coloring::Tex(tex) = &mut button.inner_box.coloring {
+                        if !tex.grayscale_conv {
+                            game.add_player(button.data.as_mut().unwrap().1);
                         }
+                        tex.grayscale_conv = true;
                     }
-                    /*match button.inner_box.coloring {
-                        Coloring::Color(mut color) => {
-                            color[0].r += 0.1;
-                            color[1].r += 0.1;
-                            color[2].r += 0.1;
-                            color[3].r += 0.1;
-                            color[4].r += 0.1;
-                            color[5].r += 0.1;
-                        }
-                        Coloring::Tex(_) => {}
-                    }
-                    button.inner_box.pos.0 += 0.1;*/
-
                 })),
-                Some(buf)
-                )))));
+                Some((buf, char.1.id))
+            )))));
         }
-        /*self.container.add(Arc::new(RwLock::new(Box::new(ColorBox {
-            pos: (0.25, 0.25),
-            width: 0.5,
-            height: 0.5,
-            coloring: Coloring::Color([
-                Color {
-                    r: 1.0,
-                    g: 1.0,
-                    b: 0.0,
-                    a: 1.0,
-                },
-                Color {
-                    r: 1.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 1.0,
-                },
-                Color {
-                    r: 1.0,
-                    g: 0.0,
-                    b: 1.0,
-                    a: 1.0,
-                },
-                Color {
-                    r: 0.0,
-                    g: 1.0,
-                    b: 0.0,
-                    a: 1.0,
-                },
-                Color {
-                    r: 0.0,
-                    g: 1.0,
-                    b: 0.0,
-                    a: 1.0,
-                },
-                Color {
-                    r: 0.0,
-                    g: 1.0,
-                    b: 0.0,
-                    a: 1.0,
-                },
-            ]),
-        }))));
-        self.container.add(Arc::new(RwLock::new(Box::new(TextBox {
-            pos: (0.0, 0.0),
-            width: 0.5,
-            height: 0.5,
-            coloring: Coloring::Color([
-                Color {
-                    r: 1.0,
-                    g: 1.0,
-                    b: 0.0,
-                    a: 0.2,
-                },
-                Color {
-                    r: 1.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.2,
-                },
-                Color {
-                    r: 1.0,
-                    g: 0.0,
-                    b: 1.0,
-                    a: 0.2,
-                },
-                Color {
-                    r: 0.0,
-                    g: 1.0,
-                    b: 0.0,
-                    a: 0.2,
-                },
-                Color {
-                    r: 0.0,
-                    g: 1.0,
-                    b: 0.0,
-                    a: 0.2,
-                },
-                Color {
-                    r: 0.0,
-                    g: 1.0,
-                    b: 0.0,
-                    a: 0.2,
-                },
-            ]),
-            text: TextSection { layout: Default::default(), text: vec![Text::new("Teste").with_color([1.0, 1.0, 1.0, 1.0])
-                .with_scale(500.0)] }
-        }))));*/
+        let mut buf = image::open("./resources/play-button_3.jpg").unwrap();
+        let buf = Arc::new(buf.into_rgba8());
+        let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
+            .format(TextureFormat::Rgba8UnormSrgb).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));
+        let view = tex.create_view(&TextureViewDescriptor::default());
+        self.container.add(Arc::new(RwLock::new(Box::new(Button::new(
+            TextBox::new(
+                (0.35, entry_offset * 1.5),
+                0.3,
+                buf.height() as f32 / (buf.width() as f32 / 0.3),
+                Coloring::Tex(Tex {
+                    ty: TexTy::Simple(Arc::new(TexTriple {
+                        tex,
+                        view,
+                        sampler: game.renderer.state.device().create_sampler(&SamplerDescriptor {
+                            address_mode_u: wgpu::AddressMode::ClampToEdge,
+                            address_mode_v: wgpu::AddressMode::ClampToEdge,
+                            address_mode_w: wgpu::AddressMode::ClampToEdge,
+                            mag_filter: wgpu::FilterMode::Linear,
+                            min_filter: wgpu::FilterMode::Nearest,
+                            mipmap_filter: wgpu::FilterMode::Nearest,
+                            ..Default::default()
+                        }),
+                    })),
+                    grayscale_conv: false,
+                }),
+                TextSection {
+                    layout: Layout::default_single_line().v_align(VerticalAlign::Bottom).h_align(HorizontalAlign::Left),
+                    text: vec![],
+                    texts: vec![],
+                }
+            ),
+            Arc::new(Box::new(|button: &mut Button<'_, Arc<RgbaImage>>, game| {
+                println!("start game!");
+                *game.game_state.lock().unwrap() = GameState::InGame;
+                game.screen_sys.push_screen(Box::new(InGame::new()));
+
+            })),
+            Some(buf)
+        )))));
     }
 
     fn on_deactive(&mut self, _game: &Arc<Game>) {}
@@ -197,7 +128,7 @@ impl Screen for Login {
     }
 
     fn is_tick_always(&self) -> bool {
-        true
+        false
     }
 
     fn container(&self) -> &Arc<Container> {
