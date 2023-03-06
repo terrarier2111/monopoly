@@ -4,6 +4,7 @@ use image::{DynamicImage, GenericImageView};
 use std::io::{BufReader, Cursor};
 use std::mem::size_of;
 use std::ops::Range;
+use std::path::Path;
 use tobj::LoadOptions;
 use wgpu::{
     AddressMode, BindGroup, BindGroupEntry, BindGroupLayout, BindingResource, Buffer,
@@ -12,8 +13,9 @@ use wgpu::{
     VertexBufferLayout, VertexFormat, VertexStepMode,
 };
 use wgpu_biolerless::{State, TextureBuilder};
+use crate::ui::COLOR_UV_OFFSETS;
 
-const RECT_INDICES: [i32; 6] = [
+const RECT_INDICES: [u32; 6] = [
     0, // bottom left
     1, // bottom right
     2, // top right
@@ -33,6 +35,24 @@ pub fn rectangle_model(state: &State, pos: (f32, f32), width: f32, height: f32) 
         ], // top right
         [-1.0 + x_off, 2.0 * height - 1.0 + y_off], // top left
     ];
+    let normal = [0.0, 0.0, 0.0];
+    let vertices = [ModelTexVertex {
+        position: [vertices[0][0], vertices[0][1], 0.0],
+        tex_coords: [COLOR_UV_OFFSETS[0].0, COLOR_UV_OFFSETS[0].1],
+        normal: normal.clone(),
+    }, ModelTexVertex {
+        position: [vertices[1][0], vertices[1][1], 0.0],
+        tex_coords: [COLOR_UV_OFFSETS[1].0, COLOR_UV_OFFSETS[1].1],
+        normal: normal.clone(),
+    }, ModelTexVertex {
+        position: [vertices[2][0], vertices[2][1], 0.0],
+        tex_coords: [COLOR_UV_OFFSETS[2].0, COLOR_UV_OFFSETS[2].1],
+        normal: normal.clone(),
+    }, ModelTexVertex {
+        position: [vertices[3][0], vertices[3][1], 0.0],
+        tex_coords: [COLOR_UV_OFFSETS[4].0, COLOR_UV_OFFSETS[4].1],
+        normal: normal.clone(),
+    }];
     let vertex_buffer = state.create_buffer(&vertices, BufferUsages::VERTEX);
     let index_buffer = state.create_buffer(&RECT_INDICES, BufferUsages::INDEX);
     Model {
@@ -119,32 +139,42 @@ pub struct Model {
 }
 
 impl Model {
-    pub async fn load_from(
+    pub fn load_from(
         file_name: &str,
         state: &State,
         layout: &BindGroupLayout,
     ) -> Result<Self> {
+        println!("path: {:?}", Path::new(file_name).canonicalize().unwrap());
         let obj_text = read_to_string(file_name)?;
         let obj_cursor = Cursor::new(obj_text);
         let mut obj_reader = BufReader::new(obj_cursor);
 
-        let (models, obj_materials) = tobj::load_obj_buf_async(
+        let (models, obj_materials) = tobj::load_obj_buf(
             &mut obj_reader,
             &LoadOptions {
                 triangulate: true,
                 single_index: true,
                 ..Default::default()
             },
-            |p| async move {
-                let mat_text = read_to_string(&p).unwrap();
+            |p| {
+                println!("material_path: {:?}", p);
+                let mut path = String::from(file_name.rsplit_once('/').unwrap().0);
+                path.push('/');
+                path.push_str(p.to_str().unwrap());
+                let path = Path::new(&path);
+                println!("path: {:?}", path.canonicalize().unwrap());
+                let mat_text = read_to_string(&path).unwrap();
                 tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
             },
-        )
-        .await?;
+        )?;
 
         let mut materials = Vec::new();
         for m in obj_materials? {
-            let bytes = read(&m.diffuse_texture)?;
+            let mut path = String::from(file_name.rsplit_once('/').unwrap().0);
+            path.push('/');
+            path.push_str(&m.diffuse_texture);
+            println!("tex path: {}", m.diffuse_texture);
+            let bytes = read(&path)?;
             let diffuse_texture = ContainedTexture::from_bytes(state, &bytes)/*load_texture(&m.diffuse_texture, state).await*/?;
             let bind_group = state.create_bind_group(
                 layout,
@@ -198,6 +228,8 @@ impl Model {
                 }
             })
             .collect::<Vec<_>>();
+
+        println!("prepped model!");
 
         Ok(Self { meshes, materials })
     }

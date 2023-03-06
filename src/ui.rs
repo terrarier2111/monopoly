@@ -107,7 +107,7 @@ pub fn is_inbounds(dims: (f32, f32), pos: (f32, f32), test: (f32, f32)) -> bool 
     (test.0 >= pos.0 && test.1 >= pos.1) && (test.0 <= bounds.0 && test.1 <= bounds.1)
 }
 
-const COLOR_UV_OFFSETS: [(f32, f32); 6] = [
+pub const COLOR_UV_OFFSETS: [(f32, f32); 6] = [
     (0.0, 1.0), // bottom left
     (1.0, 1.0), // bottom right
     (1.0, 0.0), // top right

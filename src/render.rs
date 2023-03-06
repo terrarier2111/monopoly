@@ -2,7 +2,7 @@ use crate::atlas::{Atlas, AtlasAlloc, AtlasId};
 use bytemuck_derive::Pod;
 use bytemuck_derive::Zeroable;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 use std::process::abort;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -31,7 +31,7 @@ pub struct Renderer {
     tex_model_pipeline: RenderPipeline,
     tex_bind_group_layout: BindGroupLayout,
     camera_bind_group_layout: BindGroupLayout,
-    model_bind_group_layout: BindGroupLayout,
+    pub model_bind_group_layout: BindGroupLayout,
     pub dimensions: Dimensions,
     glyphs: Mutex<Vec<GlyphInfo>>,
     models: Mutex<Vec<UploadedModel>>,
@@ -295,14 +295,18 @@ impl Renderer {
                         }],
                     );
 
+                    let mut diff_instances = HashSet::new();
+
                     let models = self.models.lock().unwrap();
                     let mut instance_buffer = vec![vec![]; models.len()];
                     for instance in instances.iter() {
                         instance_buffer[instance.model_id].push(instance.instance.to_raw());
+                        diff_instances.insert(instance.model_id);
                     }
 
                     let mut instance_gpu_buffs = vec![];
                     for instance in instance_buffer.iter() {
+                        // FIXME: don't actually create empty buffers for models with no instances!
                         let buf = self.state.create_buffer(instance, BufferUsages::VERTEX);
                         instance_gpu_buffs.push(buf);
                     }
@@ -321,9 +325,10 @@ impl Renderer {
                         // FIXME: try using the same render pass as for UI!
 
                         // println!("tex models: {}", texture_models.len());
-                        for (idx, instance) in instances.into_iter().enumerate() {
-                            let model = models.get(instance.model_id).unwrap();
-                            match &model.coloring {
+                        render_pass.set_bind_group(0, &camera_bind_group, &[]); // camera bind group
+                        for model_id in diff_instances.into_iter() {
+                            let model = models.get(model_id).unwrap();
+                            /*match &model.coloring {
                                 ModelColoring::Direct(color) => {
                                     render_pass.set_pipeline(&self.color_model_pipeline);
                                     render_pass.set_push_constants(ShaderStages::FRAGMENT, 0, bytemuck::cast_slice(color));
@@ -332,15 +337,17 @@ impl Renderer {
                                     render_pass.set_pipeline(&self.tex_model_pipeline);
                                     render_pass.set_bind_group(1, model.bind_group.as_ref().unwrap(), &[]); // texture bind group
                                 }
-                            }
+                            }*/
+                            render_pass.set_pipeline(&self.tex_model_pipeline);
                             for mesh in model.model.meshes.iter() {
-                                println!("drawing mesh!");
+                                println!("idx: {}", model_id);
+                                println!("drawing mesh {} : {}", instance_buffer.get(model_id).unwrap().len(), mesh.num_elements);
+                                println!("materials: {}", model.model.materials.len());
+                                render_pass.set_bind_group(1, &model.model.materials[mesh.material].bind_group, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint32);
-                                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_vertex_buffer(1, instance_gpu_buffs.get(idx).unwrap().slice(..));
-                                render_pass.set_bind_group(0, &camera_bind_group, &[]); // camera bind group
-                                render_pass.draw_indexed(0..mesh.num_elements, 0, 0..(instance_buffer.get(idx).unwrap().len() as u32)); // FIXME: is this correct for the instances?
+                                render_pass.set_vertex_buffer(1, instance_gpu_buffs.get(model_id).unwrap().slice(..));
+                                render_pass.draw_indexed(0..mesh.num_elements, 0, 0..(instance_buffer.get(model_id).unwrap().len() as u32));
                             }
                         }
                     }
@@ -485,7 +492,7 @@ impl Renderer {
             .shader_src(ShaderModuleSources::Single(ModuleSrc::Source(
                 ShaderSource::Wgsl(include_str!("model_texture.wgsl").into()),
             )))
-            .layout(&state.create_pipeline_layout(&[&camera_layout, &bgl], &[]))
+            .layout(&state.create_pipeline_layout(&[camera_layout, bgl], &[]))
             .build(state)
     }
 
@@ -506,7 +513,7 @@ impl Renderer {
             .shader_src(ShaderModuleSources::Single(ModuleSrc::Source(
                 ShaderSource::Wgsl(include_str!("model_color.wgsl").into()),
             )))
-            .layout(&state.create_pipeline_layout(&[&camera_layout], &[PushConstantRange {
+            .layout(&state.create_pipeline_layout(&[camera_layout], &[PushConstantRange {
                 stages: ShaderStages::FRAGMENT,
                 range: 0..16,
             }]))
@@ -923,9 +930,7 @@ impl InstanceRaw {
             attributes: &[
                 VertexAttribute {
                     offset: 0,
-                    // While our vertex shader only uses locations 0, and 1 now, in later tutorials we'll
-                    // be using 2, 3, and 4, for Vertex. We'll start at slot 5 not conflict with them later
-                    shader_location: 5,
+                    shader_location: 3,
                     format: VertexFormat::Float32x4,
                 },
                 // A mat4 takes up 4 vertex slots as it is technically 4 vec4s. We need to define a slot
@@ -933,17 +938,17 @@ impl InstanceRaw {
                 // the shader.
                 VertexAttribute {
                     offset: size_of::<[f32; 4]>() as BufferAddress,
-                    shader_location: 6,
+                    shader_location: 4,
                     format: VertexFormat::Float32x4,
                 },
                 VertexAttribute {
                     offset: size_of::<[f32; 8]>() as BufferAddress,
-                    shader_location: 7,
+                    shader_location: 5,
                     format: VertexFormat::Float32x4,
                 },
                 VertexAttribute {
                     offset: size_of::<[f32; 12]>() as BufferAddress,
-                    shader_location: 8,
+                    shader_location: 6,
                     format: VertexFormat::Float32x4,
                 },
             ],

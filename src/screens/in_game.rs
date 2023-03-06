@@ -6,7 +6,7 @@ use crate::screen_sys::Screen;
 use crate::ui::{Button, Color, ColorBox, Coloring, Container, Tex, TextBox, TextSection};
 use crate::{Game, ScreenSystem, ui};
 use std::sync::{Arc, Mutex, RwLock};
-use cgmath::{Deg, Quaternion, Rotation3, Vector3};
+use cgmath::{Deg, InnerSpace, Quaternion, Rotation3, Vector3, Zero};
 use image::{EncodableLayout, GenericImageView};
 use rand::Rng;
 use wgpu::{Sampler, SamplerDescriptor, TextureAspect, TextureDimension, TextureFormat, TextureViewDescriptor};
@@ -50,7 +50,8 @@ impl Screen for InGame {
                 ..Default::default()
             }),
         });
-        self.board_id = game.renderer.add_model(crate::model::rectangle_model(&game.renderer.state, (0.0, 0.0), 1.0, 1.0), ModelColoring::Tex(tex));
+        // self.board_id = game.renderer.add_model(crate::model::rectangle_model(&game.renderer.state, (0.0, 0.0), 1.0, 1.0), ModelColoring::Tex(tex));
+        self.board_id = game.renderer.add_model(crate::model::Model::load_from("./resources/cube.obj", &game.renderer.state, &game.renderer.model_bind_group_layout).unwrap(), ModelColoring::Tex(tex));
     }
 
     fn on_active(&mut self, _game: &Arc<Game>) {
@@ -130,10 +131,36 @@ impl Screen for InGame {
     fn on_deactive(&mut self, _game: &Arc<Game>) {}
 
     fn tick(&mut self, game: &Arc<Game>) {
+        /*
         game.models.lock().unwrap().push(ModeledInstance {
             model_id: self.board_id,
-            instance: Instance { position: Vector3::unit_z() , rotation: Quaternion::from_angle_x(Deg(0.0)) },
-        });
+            instance: Instance { position: Vector3::unit_y(), rotation: Quaternion::from_angle_x(Deg(0.0)) },
+        });*/
+        let board_id = self.board_id;
+
+        const NUM_INSTANCES_PER_ROW: u32 = 10;
+        const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(NUM_INSTANCES_PER_ROW as f32 * 0.5, 0.0, NUM_INSTANCES_PER_ROW as f32 * 0.5);
+        let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|z| {
+            (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                let position = cgmath::Vector3 { x: x as f32, y: 0.0, z: z as f32 } - INSTANCE_DISPLACEMENT;
+
+                let rotation = if position.is_zero() {
+                    // this is needed so an object at (0, 0, 0) won't get scaled to zero
+                    // as Quaternions can effect scale if they're not created correctly
+                    cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Deg(0.0))
+                } else {
+                    cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
+                };
+
+                ModeledInstance {
+                    model_id: board_id,
+                    instance: Instance {
+                        position, rotation,
+                    },
+                }
+            })
+        }).collect::<Vec<_>>();
+        game.models.lock().unwrap().extend(instances.into_iter());
         println!("adding model!");
     }
 
