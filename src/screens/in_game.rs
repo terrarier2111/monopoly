@@ -1,11 +1,12 @@
 use std::fs::File;
 use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use crate::render::{Renderer, TexTriple, TexTy};
+use crate::render::{Instance, ModelColoring, ModeledInstance, Renderer, TexTriple, TexTy};
 use crate::screen_sys::Screen;
 use crate::ui::{Button, Color, ColorBox, Coloring, Container, Tex, TextBox, TextSection};
 use crate::{Game, ScreenSystem, ui};
 use std::sync::{Arc, Mutex, RwLock};
+use cgmath::{Deg, Quaternion, Rotation3, Vector3};
 use image::{EncodableLayout, GenericImageView};
 use rand::Rng;
 use wgpu::{Sampler, SamplerDescriptor, TextureAspect, TextureDimension, TextureFormat, TextureViewDescriptor};
@@ -17,18 +18,42 @@ use crate::utils::DARK_GRAY_UI;
 #[derive(Clone)]
 pub struct InGame {
     container: Arc<Container>,
+    board_id: usize,
 }
 
 impl InGame {
     pub fn new() -> Self {
         Self {
             container: Arc::new(Container::new()),
+            board_id: 0,
         }
     }
 }
 
 impl Screen for InGame {
-    fn on_active(&mut self, game: &Arc<Game>) {
+    fn init(&mut self, game: &Arc<Game>) {
+        let mut buf = image::open("./resources/board.jpg").unwrap();
+        let buf = Arc::new(buf.into_rgba8());
+        let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
+            .format(TextureFormat::Rgba8UnormSrgb).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));
+        let view = tex.create_view(&TextureViewDescriptor::default());
+        let tex = Arc::new(TexTriple {
+            tex,
+            view,
+            sampler: game.renderer.state.device().create_sampler(&SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            }),
+        });
+        self.board_id = game.renderer.add_model(crate::model::rectangle_model(&game.renderer.state, (0.0, 0.0), 1.0, 1.0), ModelColoring::Tex(tex));
+    }
+
+    fn on_active(&mut self, _game: &Arc<Game>) {
         /*let mut buf = image::open(&char.1.model_path).unwrap();
         let buf = Arc::new(buf.into_rgba8());
         let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
@@ -104,7 +129,13 @@ impl Screen for InGame {
 
     fn on_deactive(&mut self, _game: &Arc<Game>) {}
 
-    fn tick(&mut self, _game: &Arc<Game>) {}
+    fn tick(&mut self, game: &Arc<Game>) {
+        game.models.lock().unwrap().push(ModeledInstance {
+            model_id: self.board_id,
+            instance: Instance { position: Vector3::unit_z() , rotation: Quaternion::from_angle_x(Deg(0.0)) },
+        });
+        println!("adding model!");
+    }
 
     fn is_closable(&self) -> bool {
         false

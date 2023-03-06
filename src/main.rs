@@ -2,10 +2,10 @@
 #![feature(maybe_uninit_array_assume_init)]
 #![feature(once_cell)]
 
-use std::fs;
+use std::{fs, mem};
 use std::fs::File;
 use std::mem::MaybeUninit;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -134,7 +134,8 @@ fn main() {
             let models = game.screen_sys.tick(&game, &window);
             let mut camera = game.camera.lock().unwrap();
             game.camera_controller.lock().unwrap().update_camera(&mut camera);
-            renderer.render(models, vec![], game.atlas.clone(), &camera);
+            let mut old = mem::replace(game.models.lock().unwrap().deref_mut(), vec![]);
+            renderer.render(models, old, game.atlas.clone(), &camera);
         }
         Event::RedrawEventsCleared => {}
         Event::LoopDestroyed => {}

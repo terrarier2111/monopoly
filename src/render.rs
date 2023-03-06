@@ -131,12 +131,12 @@ impl Renderer {
         })
     }
 
-    pub fn add_model(&self, state: &State, model: crate::model::Model, coloring: ModelColoring) -> usize {
+    pub fn add_model(&self, model: crate::model::Model, coloring: ModelColoring) -> usize {
         let mut models = self.models.lock().unwrap();
         let bind_group = match &coloring {
             ModelColoring::Direct(_) => None,
             ModelColoring::Tex(tex) => {
-                let bg = state.create_bind_group(&self.model_bind_group_layout, &[BindGroupEntry {
+                let bg = self.state.create_bind_group(&self.model_bind_group_layout, &[BindGroupEntry {
                     binding: 0,
                     resource: BindingResource::TextureView(&tex.view),
                 }, BindGroupEntry {
@@ -312,27 +312,29 @@ impl Renderer {
                             view: &view,
                             resolve_target: None,
                             ops: Operations {
-                                load: LoadOp::Clear(LIGHT_GRAY_GPU),
+                                load: LoadOp::Load,
                                 store: true,
                             },
                         })];
                         let mut render_pass =
                             state.create_render_pass(&mut encoder, &attachments, None);
+                        // FIXME: try using the same render pass as for UI!
 
                         // println!("tex models: {}", texture_models.len());
                         for (idx, instance) in instances.into_iter().enumerate() {
                             let model = models.get(instance.model_id).unwrap();
                             match &model.coloring {
                                 ModelColoring::Direct(color) => {
-                                    render_pass.set_pipeline(&self.tex_model_pipeline);
+                                    render_pass.set_pipeline(&self.color_model_pipeline);
                                     render_pass.set_push_constants(ShaderStages::FRAGMENT, 0, bytemuck::cast_slice(color));
                                 }
                                 ModelColoring::Tex(_) => {
-                                    render_pass.set_pipeline(&self.color_model_pipeline);
+                                    render_pass.set_pipeline(&self.tex_model_pipeline);
                                     render_pass.set_bind_group(1, model.bind_group.as_ref().unwrap(), &[]); // texture bind group
                                 }
                             }
                             for mesh in model.model.meshes.iter() {
+                                println!("drawing mesh!");
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                                 render_pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint32);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -879,6 +881,7 @@ impl CameraController {
     }
 }
 
+#[derive(Clone)]
 pub struct ModeledInstance {
     pub model_id: usize,
     pub instance: Instance,
@@ -889,6 +892,7 @@ pub enum ModelColoring {
     Tex(Arc<TexTriple>),
 }
 
+#[derive(Clone)]
 pub struct Instance {
     pub position: Vector3<f32>,
     pub rotation: Quaternion<f32>,
