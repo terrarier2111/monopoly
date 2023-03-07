@@ -74,6 +74,7 @@ fn main() {
                     } else {
                         game.renderer.dimensions.set(size.width, size.height);
                     }
+                    game.renderer.resize((size.width, size.height));
                 }
                 WindowEvent::Moved(_) => {}
                 WindowEvent::CloseRequested => {

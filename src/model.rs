@@ -15,7 +15,7 @@ use wgpu::{
 use wgpu_biolerless::{State, TextureBuilder};
 use crate::ui::COLOR_UV_OFFSETS;
 
-const RECT_INDICES: [u32; 6] = [
+const RECT_INDICES: [u32/*u16*/; 6] = [
     0, // bottom left
     1, // bottom right
     2, // top right
@@ -144,7 +144,6 @@ impl Model {
         state: &State,
         layout: &BindGroupLayout,
     ) -> Result<Self> {
-        println!("path: {:?}", Path::new(file_name).canonicalize().unwrap());
         let obj_text = read_to_string(file_name)?;
         let obj_cursor = Cursor::new(obj_text);
         let mut obj_reader = BufReader::new(obj_cursor);
@@ -157,12 +156,10 @@ impl Model {
                 ..Default::default()
             },
             |p| {
-                println!("material_path: {:?}", p);
                 let mut path = String::from(file_name.rsplit_once('/').unwrap().0);
                 path.push('/');
                 path.push_str(p.to_str().unwrap());
                 let path = Path::new(&path);
-                println!("path: {:?}", path.canonicalize().unwrap());
                 let mat_text = read_to_string(&path).unwrap();
                 tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
             },
@@ -173,7 +170,6 @@ impl Model {
             let mut path = String::from(file_name.rsplit_once('/').unwrap().0);
             path.push('/');
             path.push_str(&m.diffuse_texture);
-            println!("tex path: {}", m.diffuse_texture);
             let bytes = read(&path)?;
             let diffuse_texture = ContainedTexture::from_bytes(state, &bytes)/*load_texture(&m.diffuse_texture, state).await*/?;
             let bind_group = state.create_bind_group(
@@ -228,8 +224,6 @@ impl Model {
                 }
             })
             .collect::<Vec<_>>();
-
-        println!("prepped model!");
 
         Ok(Self { meshes, materials })
     }

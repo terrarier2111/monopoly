@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::path::Path;
 use crate::render::{Renderer, TexTriple, TexTy};
 use crate::screen_sys::Screen;
 use crate::ui::{Button, Color, ColorBox, Coloring, Container, Tex, TextBox, TextSection};
@@ -32,9 +33,12 @@ impl Login {
 
 impl Screen for Login {
     fn on_active(&mut self, game: &Arc<Game>) {
+        let local = Path::new("./config/eiffelturm.jpg");
+        println!("{:?}", local.canonicalize().unwrap());
         let entry_offset = 1.0 / (self.chars.lock().unwrap().len() + 3) as f32;
         for char in self.chars.lock().unwrap().iter().enumerate() {
-            let mut buf = image::open(&char.1.model_path).unwrap();
+            println!("path: {}", char.1.model_path);
+            let mut buf = image::open(Path::new(&char.1.model_path).canonicalize().unwrap()).unwrap();
             let buf = Arc::new(buf.into_rgba8());
             let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
                 .format(TextureFormat::Rgba8UnormSrgb).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));
@@ -77,7 +81,7 @@ impl Screen for Login {
                 Some((buf, char.1.id))
             )))));
         }
-        let mut buf = image::open("./resources/play-button_3.jpg").unwrap();
+        let mut buf = image::open("./resources/eiffelturm.jpg").unwrap();
         let buf = Arc::new(buf.into_rgba8());
         let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
             .format(TextureFormat::Rgba8UnormSrgb).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));

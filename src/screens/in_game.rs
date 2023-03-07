@@ -32,7 +32,7 @@ impl InGame {
 
 impl Screen for InGame {
     fn init(&mut self, game: &Arc<Game>) {
-        let mut buf = image::open("./resources/board.jpg").unwrap();
+        let mut buf = image::open("./resources/eiffelturm.jpg").unwrap();
         let buf = Arc::new(buf.into_rgba8());
         let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
             .format(TextureFormat::Rgba8UnormSrgb).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));

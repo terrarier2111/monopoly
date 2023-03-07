@@ -10,12 +10,10 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use cgmath::{Deg, InnerSpace, Matrix4, perspective, Point3, Quaternion, SquareMatrix, Vector3};
 use dashmap::DashMap;
-use wgpu::{BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferAddress, BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites, IndexFormat, LoadOp, Operations, PushConstantRange, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPipeline, Sampler, SamplerBindingType, ShaderSource, ShaderStages, Texture, TextureFormat, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
+use swap_arc::SwapArc;
+use wgpu::{BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferAddress, BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites, DepthStencilState, IndexFormat, LoadOp, Operations, PushConstantRange, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPipeline, Sampler, SamplerBindingType, ShaderSource, ShaderStages, Texture, TextureDimension, TextureFormat, TextureSampleType, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 use wgpu::util::StagingBelt;
-use wgpu_biolerless::{
-    FragmentShaderState, ModuleSrc, PipelineBuilder, ShaderModuleSources, State, VertexShaderState,
-    WindowSize,
-};
+use wgpu_biolerless::{FragmentShaderState, ModuleSrc, PipelineBuilder, RawTextureBuilder, ShaderModuleSources, State, TextureBuilder, VertexShaderState, WindowSize};
 use wgpu_glyph::{ab_glyph, GlyphBrush, GlyphBrushBuilder, Section};
 use winit::event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::window::Window;
@@ -35,6 +33,7 @@ pub struct Renderer {
     pub dimensions: Dimensions,
     glyphs: Mutex<Vec<GlyphInfo>>,
     models: Mutex<Vec<UploadedModel>>,
+    depth_tex: SwapArc<TexTriple>,
 }
 
 pub struct GlyphInfo {
@@ -114,13 +113,14 @@ impl Renderer {
             },
         ]);
 
+        let depth_tex = TexTriple::create_depth_texture(&state);
         let (width, height) = window.window_size();
         Ok(Self {
             atlas_pipeline: Self::atlas_ui_pipeline(&state),
             tex_ui_pipeline: Self::tex_ui_pipeline(&state),
             color_ui_pipeline: Self::color_ui_pipeline(&state),
-            color_model_pipeline: Self::tex_model_pipeline(&state, &model_bind_group_layout, &camera_bind_group_layout),
-            tex_model_pipeline: Self::color_model_pipeline(&state, &camera_bind_group_layout),
+            color_model_pipeline: Self::color_model_pipeline(&state, &camera_bind_group_layout),
+            tex_model_pipeline: Self::tex_model_pipeline(&state, &model_bind_group_layout, &camera_bind_group_layout),
             state,
             dimensions: Dimensions::new(width, height),
             glyphs: Mutex::new(glyphs),
@@ -128,7 +128,12 @@ impl Renderer {
             models: Mutex::new(vec![]),
             camera_bind_group_layout,
             model_bind_group_layout,
+            depth_tex: SwapArc::new(Arc::new(depth_tex)),
         })
+    }
+
+    pub fn resize(&self, _size: (u32, u32)) {
+        self.depth_tex.store(Arc::new(TexTriple::create_depth_texture(&self.state)));
     }
 
     pub fn add_model(&self, model: crate::model::Model, coloring: ModelColoring) -> usize {
@@ -312,6 +317,12 @@ impl Renderer {
                     }
 
                     {
+                        let tex = self.depth_tex.load();
+                        let attachment = Some(RenderPassDepthStencilAttachment {
+                            view: &tex.view,
+                            depth_ops: Some(Operations { load: LoadOp::Clear(1.0), store: true }),
+                            stencil_ops: None,
+                        });
                         let attachments = [Some(RenderPassColorAttachment {
                             view: &view,
                             resolve_target: None,
@@ -321,7 +332,7 @@ impl Renderer {
                             },
                         })];
                         let mut render_pass =
-                            state.create_render_pass(&mut encoder, &attachments, None);
+                            state.create_render_pass(&mut encoder, &attachments, attachment);
                         // FIXME: try using the same render pass as for UI!
 
                         // println!("tex models: {}", texture_models.len());
@@ -345,7 +356,7 @@ impl Renderer {
                                 println!("materials: {}", model.model.materials.len());
                                 render_pass.set_bind_group(1, &model.model.materials[mesh.material].bind_group, &[]);
                                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                render_pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint32);
+                                render_pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint32/*IndexFormat::Uint16*/);
                                 render_pass.set_vertex_buffer(1, instance_gpu_buffs.get(model_id).unwrap().slice(..));
                                 render_pass.draw_indexed(0..mesh.num_elements, 0, 0..(instance_buffer.get(model_id).unwrap().len() as u32));
                             }
@@ -493,6 +504,13 @@ impl Renderer {
                 ShaderSource::Wgsl(include_str!("model_texture.wgsl").into()),
             )))
             .layout(&state.create_pipeline_layout(&[camera_layout, bgl], &[]))
+            .depth_stencil(DepthStencilState {
+                format: TexTriple::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            })
             .build(state)
     }
 
@@ -954,4 +972,34 @@ impl InstanceRaw {
             ],
         }
     }
+}
+
+impl TexTriple {
+
+    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+    pub fn create_depth_texture(state: &State) -> Self {
+        let texture = state.create_raw_texture(RawTextureBuilder::new().texture_dimension(TextureDimension::D2)
+            .format(Self::DEPTH_FORMAT).dimensions((state.raw_inner_surface_config().width, state.raw_inner_surface_config().height)).usages(wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING));
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = state.device().create_sampler(
+            &wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                compare: Some(wgpu::CompareFunction::LessEqual),
+                lod_min_clamp: 0.0,
+                lod_max_clamp: 100.0,
+                ..Default::default()
+            }
+        );
+
+        Self { tex: texture, view, sampler }
+    }
+
 }
