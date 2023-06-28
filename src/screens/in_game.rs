@@ -32,7 +32,8 @@ impl InGame {
 
 impl Screen for InGame {
     fn init(&mut self, game: &Arc<Game>) {
-        let mut buf = image::open("./resources/eiffelturm.jpg").unwrap();
+        // let mut buf = image::open("./resources/board.jpg").unwrap();
+        let mut buf = image::open("./resources/cube-diffuse.jpg").unwrap();
         let buf = Arc::new(buf.into_rgba8());
         let tex = game.renderer.state.create_texture(TextureBuilder::new().data(buf.as_bytes())
             .format(TextureFormat::Rgba8UnormSrgb).texture_dimension(TextureDimension::D2).dimensions(buf.dimensions()));
@@ -51,6 +52,7 @@ impl Screen for InGame {
             }),
         });
         // self.board_id = game.renderer.add_model(crate::model::rectangle_model(&game.renderer.state, (0.0, 0.0), 1.0, 1.0), ModelColoring::Tex(tex));
+        // self.board_id = game.renderer.add_model(crate::model::Model::load_from("./resources/board.obj", &game.renderer.state, &game.renderer.model_bind_group_layout).unwrap(), ModelColoring::Tex(tex));
         self.board_id = game.renderer.add_model(crate::model::Model::load_from("./resources/cube.obj", &game.renderer.state, &game.renderer.model_bind_group_layout).unwrap(), ModelColoring::Tex(tex));
     }
 
@@ -131,11 +133,11 @@ impl Screen for InGame {
     fn on_deactive(&mut self, _game: &Arc<Game>) {}
 
     fn tick(&mut self, game: &Arc<Game>) {
-        /*
         game.models.lock().unwrap().push(ModeledInstance {
             model_id: self.board_id,
             instance: Instance { position: Vector3::unit_y(), rotation: Quaternion::from_angle_x(Deg(0.0)) },
-        });*/
+        });
+
         let board_id = self.board_id;
 
         const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -161,6 +163,7 @@ impl Screen for InGame {
             })
         }).collect::<Vec<_>>();
         game.models.lock().unwrap().extend(instances.into_iter());
+
         println!("adding model!");
     }
 

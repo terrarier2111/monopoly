@@ -9,6 +9,8 @@ use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use cgmath::{Deg, Point3, Rad};
+use instant::Instant;
 use rand::Rng;
 use wgpu::{Features, TextureFormat};
 use wgpu_biolerless::{DeviceRequirements, StateBuilder};
@@ -60,13 +62,13 @@ fn main() {
     game.screen_sys.push_screen(Box::new(login::Login::new(Arc::new(Mutex::new(game.characters.clone())))));
 
     let mut mouse_pos = (0.0, 0.0);
+    let mut prev = Instant::now();
     event_loop.run(move |event, _, control_flow| match event {
         Event::NewEvents(_) => {}
         Event::WindowEvent {
             ref event,
             window_id,
         } if window_id == window.id() => {
-            game.camera_controller.lock().unwrap().process_events(event);
             match event {
                 WindowEvent::Resized(size) => {
                     if !state.resize(*size) {
@@ -86,16 +88,25 @@ fn main() {
                 WindowEvent::HoveredFileCancelled => {}
                 WindowEvent::ReceivedCharacter(_) => {}
                 WindowEvent::Focused(_) => {}
-                WindowEvent::KeyboardInput { .. } => {}
+                WindowEvent::KeyboardInput { input, .. } => {
+                    if let Some(keycode) = input.virtual_keycode {
+                        game.camera_controller.lock().unwrap().process_keyboard(keycode, input.state);
+                    }
+                }
                 WindowEvent::ModifiersChanged(_) => {}
                 WindowEvent::CursorMoved { position, .. } => {
+                    let (dx, dy) = (position.x - mouse_pos.0, position.y - mouse_pos.1);
+                    game.camera_controller.lock().unwrap().process_mouse(dx, dy);
+                    mouse_pos = (position.x, position.y);
                     let (width, height) = game.renderer.dimensions.get();
                     mouse_pos = (position.x / width as f64, 1.0 - position.y / height as f64);
                     game.screen_sys.on_mouse_hover(&game, mouse_pos);
                 }
                 WindowEvent::CursorEntered { .. } => {}
                 WindowEvent::CursorLeft { .. } => {}
-                WindowEvent::MouseWheel { .. } => {}
+                WindowEvent::MouseWheel { delta, .. } => {
+                    game.camera_controller.lock().unwrap().process_scroll(delta);
+                }
                 WindowEvent::MouseInput { button, state, .. } => {
                     if button == &MouseButton::Left {
                         game.screen_sys.on_mouse_click(&game, mouse_pos, if state == &ElementState::Pressed {
@@ -131,10 +142,13 @@ fn main() {
             window.request_redraw();
         }
         Event::RedrawRequested(_) => {
+            let now = Instant::now();
+            let curr_delta = now.duration_since(prev);
+            prev = now;
             // FIXME: perform redraw
             let models = game.screen_sys.tick(&game, &window);
             let mut camera = game.camera.lock().unwrap();
-            game.camera_controller.lock().unwrap().update_camera(&mut camera);
+            game.camera_controller.lock().unwrap().update_camera(&mut camera, curr_delta);
             let mut old = mem::replace(game.models.lock().unwrap().deref_mut(), vec![]);
             renderer.render(models, old, game.atlas.clone(), &camera);
         }
@@ -194,7 +208,7 @@ impl Game {
         }
 
         let atlas = Arc::new(Atlas::new(renderer.state.clone(), (1024, 1024), TextureFormat::Rgba8Unorm));
-        let camera = Mutex::new(Camera::new(&renderer.state));
+        let camera = Mutex::new(Camera::new(Point3::new(0.0, 0.0, 0.0), Rad::from(Deg(45.0)), Rad::from(Deg(45.0))));
 
         Self {
             players: Mutex::new(players),
@@ -210,7 +224,7 @@ impl Game {
             characters: load_characters(),
             models: Mutex::new(vec![]),
             camera,
-            camera_controller: Mutex::new(CameraController::new(0.2)),
+            camera_controller: Mutex::new(CameraController::new(0.2, 0.05/*0.5*/)),
         }
     }
 
